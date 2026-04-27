@@ -1,0 +1,10 @@
+# Dev dependencies — Hands-Free
+-r requirements.txt
+
+pytest>=8.3.0
+pytest-asyncio>=0.25.0
+pytest-mock>=3.14.0
+httpx>=0.28.0          # FastAPI test client
+mypy>=1.15.0
+ruff>=0.11.0
+types-aiofiles>=24.1.0

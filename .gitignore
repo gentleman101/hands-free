@@ -1,0 +1,71 @@
+# Dependencies
+node_modules/
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Build output
+dist/
+build/
+*.egg-info/
+
+# Databases
+*.db
+*.sqlite3
+*.sql.bak
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker volumes (local)
+pgdata/
+
+# Logs
+*.log
+logs/
+
+# Model files (too large for git)
+models/checkpoints/
+*.gguf
+*.bin
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+
+# Fish Speech — cloned dependency with large model files, not tracked in this repo
+fish-speech/
+
+# Runtime data (db, raw audio, logs)
+data/
+*.raw
+
+# Audio temp files
+fixtures/audio/*.wav
+*.mp3
+temp_audio/
+output_audio/
+
+# Dataset files (large)
+datasets/raw/
+datasets/processed/*.jsonl
+
+# Test artifacts
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
