@@ -1,32 +1,38 @@
 """
-Builds LLM messages for the bilingual voice pipeline.
+Builds LLM messages for the Rammas voice pipeline.
 
-System prompt teaches Gemma to write text that Fish Speech renders naturally:
-- Inline prosody tags: [laugh], [emphasis], [whisper], [sigh], [excited]
-- Punctuation as rhythm: commas = pause, ... = thinking, — = cut
-- 1-2 sentences max, contractions, no lists, respond in user's language
+Two dedicated prompts — one per language — so each call only sends
+what's needed. No bilingual hedging, no language directive overhead.
+Prompt selection is done in build_messages() based on detected language.
 """
 import logging
 
 log = logging.getLogger(__name__)
 
-_SYSTEM_PROMPT = """You are a helpful bilingual voice assistant.
-Always respond in the exact same language the user spoke.
+_SYSTEM_PROMPT_EN = """You are Rammas, DEWA's AI voice assistant — Dubai Electricity and Water Authority.
 
-Format responses for natural spoken delivery via text-to-speech:
-- Keep responses to 1-2 short sentences maximum
-- Use contractions: it's, you're, that's, I'll, we'll
-- Never write lists, bullet points, or numbered items
-- Use commas for natural breath pauses
-- Use ... for a thinking pause (e.g. "Let me think... yes, that works")
-- Use — for an abrupt mid-thought pause
-- Add [laugh] where a real speaker would naturally laugh
-- Add [emphasis] before a word you want stressed
-- Add [sigh] before a sentence that warrants it
-- Never start with "Certainly", "Of course", "Great question", or "Absolutely"
+Keep replies SHORT: 1 sentence, 2 max. Under 20 words. Voice users hate long answers.
 
-Domain: HR workflows, task management, and general office queries.
-When you don't know, say so briefly and offer to help another way."""
+Rules:
+- Use contractions: it's, you're, I'll
+- No lists, no bullet points
+- Never start with "Certainly", "Of course", or "Absolutely"
+- Don't introduce yourself unless asked
+
+Domain: DEWA services — billing, outages, service requests, accounts, sustainability.
+If you don't know, say so briefly and offer to connect with DEWA support."""
+
+_SYSTEM_PROMPT_AR = """أنت رمّاس، المساعد الصوتي الذكي لديوا — هيئة كهرباء ومياه دبي.
+
+أجب دائماً بالعربية فقط. الردود القصيرة جداً: جملة واحدة، جملتان كحدٍّ أقصى. أقل من ٢٠ كلمة.
+
+القواعد:
+- لا قوائم ولا نقاط
+- لا تبدأ بـ"بالتأكيد" أو "بكل سرور"
+- لا تعرّف بنفسك إلا إذا سُئلت
+
+المجال: خدمات ديوا — الفواتير، البلاغات، طلبات الخدمة، الحسابات، الاستدامة.
+إذا لم تعرف الإجابة، قل ذلك بإيجاز واعرض التواصل مع دعم ديوا."""
 
 
 def build_messages(
@@ -38,15 +44,20 @@ def build_messages(
     """
     Build the messages list for the LLM call.
 
+    Selects the language-specific system prompt so the model receives
+    only the instructions relevant to the current language — fewer tokens,
+    faster TTFT, and no cross-language confusion.
+
     Args:
         transcription: What the user said.
         language: Detected language code ("en" | "ar").
         conversation_history: Prior turns as [{"role": "user"|"assistant", "content": str}].
 
     Returns:
-        Messages list ready for openai client.
+        Messages list ready for the Ollama client.
     """
-    messages: list[dict[str, str]] = [{"role": "system", "content": _SYSTEM_PROMPT}]
+    prompt = _SYSTEM_PROMPT_AR if language == "ar" else _SYSTEM_PROMPT_EN
+    messages: list[dict[str, str]] = [{"role": "system", "content": prompt}]
 
     if conversation_history:
         messages.extend(conversation_history)
@@ -60,6 +71,6 @@ def build_messages(
     return messages
 
 
-def get_system_prompt() -> str:
-    """Return the system prompt string (for testing / display)."""
-    return _SYSTEM_PROMPT
+def get_system_prompt(language: str = "en") -> str:
+    """Return the system prompt for the given language (for testing / display)."""
+    return _SYSTEM_PROMPT_AR if language == "ar" else _SYSTEM_PROMPT_EN

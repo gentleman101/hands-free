@@ -30,8 +30,9 @@ _DEFAULTS = {
     "HF_FISH_SPEECH_URL": "http://localhost:8001",
     "HF_LOG_LEVEL": "WARNING",   # keep console clean during voice use
     "HF_PIPELINE_PHASE": "raw",
-    "HF_MAX_TOKENS": "2048",             # thinking model needs room to reason before responding
+    "HF_MAX_TOKENS": "200",              # short conversational replies — reasoning is OFF, no need for room
     "PYTORCH_ENABLE_MPS_FALLBACK": "1",  # allow Metal ops to fall back to CPU if unsupported
+    "HF_TTS_ENGINE": "say",              # "say" = Apple built-in (fast) | "fish" = Fish Speech (quality)
 }
 
 
@@ -76,11 +77,17 @@ def start_fish_speech() -> None:
     log_file = open(log_path, "w")  # noqa: SIM115 — intentional long-lived file handle
 
     python = sys.executable
+    # Override PYTORCH_ENABLE_MPS_FALLBACK=0 for Fish Speech — the parent process sets it to 1
+    # for Whisper, but for Fish Speech it causes silent CPU fallback on every unsupported MPS op,
+    # which kills throughput (8 tok/sec instead of 300+ tok/sec on Apple Silicon).
+    fish_env = os.environ.copy()
+    fish_env["PYTORCH_ENABLE_MPS_FALLBACK"] = "0"
     proc = subprocess.Popen(
-        [python, str(server_script), "--listen", "0.0.0.0:8001", "--device", "mps"],
+        [python, str(server_script), "--listen", "0.0.0.0:8001", "--device", "mps", "--half", "--compile"],
         cwd=str(fish_dir),
         stdout=log_file,
         stderr=log_file,
+        env=fish_env,
     )
     print(f"  Fish Speech starting (pid {proc.pid}) — logs: data/fish_speech.log")
     print("  Waiting for model load", end="", flush=True)
@@ -104,8 +111,10 @@ def preflight() -> None:
     ollama_ok = _check_ollama()
     fish_ok = _check_fish()
 
+    using_fish = os.environ.get("HF_TTS_ENGINE", "say") == "fish"
     print(f"  Ollama      {'✓' if ollama_ok else '✗ NOT RUNNING'}")
-    print(f"  Fish Speech {'✓' if fish_ok else '○ not running — will start'}")
+    if using_fish:
+        print(f"  Fish Speech {'✓' if fish_ok else '○ not running — will start'}")
 
     if not ollama_ok:
         print("\n  ERROR: Ollama is not running.")
@@ -113,8 +122,11 @@ def preflight() -> None:
         print("  Then pull model: ollama pull gemma4:e2b\n")
         sys.exit(1)
 
-    if not fish_ok:
-        start_fish_speech()
+    if os.environ.get("HF_TTS_ENGINE", "say") == "fish":
+        if not fish_ok:
+            start_fish_speech()
+    else:
+        print("  TTS engine      Apple say (HF_TTS_ENGINE=fish to switch)")
 
     # Warm up Whisper so first utterance has no cold-start delay
     print("  Loading Whisper model...", end="", flush=True)
@@ -147,6 +159,7 @@ def start_server(port: int) -> threading.Thread:
 # ── audio playback ────────────────────────────────────────────────────────────
 
 async def _play(audio_bytes: bytes) -> None:
+    """Play a complete audio buffer (WAV or raw PCM). Used by macOS say fallback."""
     import io
     import wave
 
@@ -172,6 +185,58 @@ async def _play(audio_bytes: bytes) -> None:
     sd.play(pcm, samplerate=sr, blocking=True)
 
 
+async def _play_realtime_stream(gen) -> None:  # type: ignore[no-untyped-def]
+    """
+    Consume an async generator of raw PCM int16 chunks (44100Hz) from Fish Speech
+    and play them gaplessly via a continuous sounddevice OutputStream.
+
+    Normalisation is applied to the whole response after collection — streaming
+    normalisation would require a look-ahead which adds latency. We accept
+    natural Fish Speech gain here (already reasonable) and apply a mild ceiling.
+    """
+    import numpy as np
+    import sounddevice as sd  # type: ignore[import-untyped]
+
+    SR = 44100
+
+    with sd.OutputStream(samplerate=SR, channels=1, dtype="float32") as stream:
+        async for raw in gen:
+            if not raw:
+                continue
+            pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32767.0
+            # Write immediately — OutputStream buffers and plays gaplessly
+            stream.write(pcm)
+        # Context manager __exit__ calls stream.stop() + close(), draining the buffer
+
+
+# ── status line ──────────────────────────────────────────────────────────────
+
+def _status(msg: str) -> None:
+    """Overwrite the current terminal line with a status message (no newline)."""
+    print(f"\r  {msg:<50}", end="", flush=True)
+
+
+# ── turn display ─────────────────────────────────────────────────────────────
+
+def _fmt_turn(turn: int, lang: str, heard: str, said: str, ctx: dict) -> str:
+    stt     = ctx.get("stt_ms", 0)
+    ttft    = ctx.get("llm_ttft_ms", 0)
+    llm_tot = ctx.get("llm_total_ms", 0)
+    ttfa    = ctx.get("tts_ttfa_ms", 0)
+    tts_tot = ctx.get("tts_total_ms", 0)
+    p_ttfa  = ctx.get("pipeline_ttfa_ms", 0)
+    total   = ctx.get("total_ms", 0)
+    return (
+        f"  ── Turn {turn} [{lang}] ──────────────────────────────\n"
+        f"  Whisper  {stt:>6,} ms  \"{heard}\"\n"
+        f"  LLM TTFT {ttft:>6,} ms  →  total {llm_tot:>7,} ms\n"
+        f"  TTS TTFA {ttfa:>6,} ms  →  total {tts_tot:>7,} ms\n"
+        f"  {'─' * 47}\n"
+        f"  TTFA     {p_ttfa:>6,} ms  |  total  {total:>7,} ms\n"
+        f"       \"{said}\"\n"
+    )
+
+
 # ── macOS say fallback ────────────────────────────────────────────────────────
 
 async def _say(text: str, language: str) -> None:
@@ -193,7 +258,7 @@ async def _say(text: str, language: str) -> None:
 async def mic_loop(fish_available: bool) -> None:
     from backend.database import init_db
     from backend.services.audio_capture import AudioCapture, list_input_devices, _pick_input_device
-    from backend.services.pipeline import run
+    from backend.services.pipeline import run_realtime
     import os
 
     await init_db()
@@ -212,13 +277,14 @@ async def mic_loop(fish_available: bool) -> None:
     else:
         mic_label = "none found"
 
-    tts_mode = "Fish Speech" if fish_available else "macOS say (fallback)"
+    tts_engine = os.environ.get("HF_TTS_ENGINE", "say")
+    tts_mode = "Fish Speech (streaming)" if tts_engine == "fish" else "Apple say (EN: Samantha, AR: Layla)"
     capture = AudioCapture()
     await capture.start()
 
     print("\n  ┌─────────────────────────────────────────┐")
     print("  │  Hands-Free is listening                │")
-    print("  │  Speak → pause 300ms → response plays   │")
+    print("  │  Speak → pause → response plays         │")
     print("  │  Ctrl+C to quit                         │")
     print(f"  │  MIC: {mic_label:<35}│")
     print(f"  │  TTS: {tts_mode:<35}│")
@@ -227,44 +293,68 @@ async def mic_loop(fish_available: bool) -> None:
     # Conversation history — keeps context across turns
     history: list[dict[str, str]] = []
 
+    _status("🎤  Listening...")
+
     try:
         async for utterance_wav in capture.utterances():
             try:
-                result = await run(utterance_wav, conversation_history=history)
-                if not result.transcription.strip():
+                ctx: dict = {}
+
+                _status("⏳  Processing — please wait...")
+                capture.mute()   # block mic from queuing while we process + play
+                try:
+                    if tts_engine == "fish" and fish_available:
+                        # Streaming path — gapless playback via OutputStream
+                        # run_realtime populates ctx after generator exhausts
+                        await _play_realtime_stream(
+                            run_realtime(utterance_wav, conversation_history=history, out=ctx)
+                        )
+                    else:
+                        # Apple say path — skip Fish Speech TTS entirely
+                        async for _ in run_realtime(
+                            utterance_wav,
+                            conversation_history=history,
+                            out=ctx,
+                            skip_tts=True,
+                        ):
+                            pass  # nothing yielded; ctx populated after exhaustion
+                        if ctx.get("response_text"):
+                            await _say(ctx["response_text"], ctx.get("language", "en"))
+                    # Settle delay — speaker physically rings ~200ms after OutputStream closes;
+                    # keeping mic muted a little longer prevents self-pickup
+                    await asyncio.sleep(0.4)
+                finally:
+                    capture.unmute()  # always re-open mic, even on error
+
+                transcription = ctx.get("transcription", "")
+                if not transcription.strip():
+                    _status("🎤  Listening...")
                     continue  # noise/silence — stay silent, keep listening
-                print("  ▶ processing...", end="", flush=True)
-                lat = result.latency
-                lang = result.language.upper()
+
+                response_text = ctx.get("response_text", "")
+                language = ctx.get("language", "en")
                 turn = len(history) // 2 + 1
-                # Truncate long texts for display
-                heard = result.transcription[:80] + ("…" if len(result.transcription) > 80 else "")
-                said = result.response_text[:80] + ("…" if len(result.response_text) > 80 else "")
-                print(
-                    f"\r  ── Turn {turn} [{lang}] ────────────────────────────────\n"
-                    f"  STT  {lat.stt_ms:>5}ms  \"{heard}\"\n"
-                    f"  LLM  {lat.llm_ttft_ms:>5}ms ttft  /  {lat.llm_total_ms:>6}ms total\n"
-                    f"  TTS  {lat.tts_ttfa_ms:>5}ms ttfa  /  {lat.tts_total_ms:>6}ms total\n"
-                    f"       \"{said}\"\n"
-                    f"  TTFA {lat.pipeline_ttfa_ms:>5}ms  |  total {lat.total_ms}ms\n"
-                )
+
+                heard = transcription[:80] + ("…" if len(transcription) > 80 else "")
+                said = response_text[:80] + ("…" if len(response_text) > 80 else "")
+                print()   # end the status line before printing the turn block
+                print(_fmt_turn(turn, language.upper(), heard, said, ctx))
 
                 # Append this turn to history for next round
-                history.append({"role": "user", "content": result.transcription})
-                history.append({"role": "assistant", "content": result.response_text})
+                history.append({"role": "user", "content": transcription})
+                history.append({"role": "assistant", "content": response_text})
 
                 # Keep last 10 turns (20 messages) to avoid context overflow
                 if len(history) > 20:
                     history = history[-20:]
 
-                if fish_available and result.audio_bytes:
-                    await _play(result.audio_bytes)
-                else:
-                    await _say(result.response_text, result.language)
+                _status("🎤  Listening...")
+
             except Exception as exc:
                 print(f"\r  [error] {exc}\n")
+                _status("🎤  Listening...")
     except KeyboardInterrupt:
-        print("\n  Goodbye.\n")
+        print("\n\n  Goodbye.\n")
     finally:
         await capture.stop()
 
@@ -289,7 +379,8 @@ def main() -> None:
         print(f"  API server   http://localhost:{args.port}")
         print(f"  Health       http://localhost:{args.port}/readyz")
 
-    asyncio.run(mic_loop(fish_available=_check_fish()))
+    tts_engine = os.environ.get("HF_TTS_ENGINE", "say")
+    asyncio.run(mic_loop(fish_available=tts_engine == "fish" and _check_fish()))
 
 
 if __name__ == "__main__":

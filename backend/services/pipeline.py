@@ -20,10 +20,12 @@ from backend.services import stt as stt_svc
 from backend.services import tts as tts_svc
 log = logging.getLogger(__name__)
 
-# Arabic + English sentence boundaries
-_BOUNDARIES = frozenset(".?!\n،؟！")
+# Arabic + English sentence boundaries — comma included so first clause ships to TTS earlier
+_BOUNDARIES = frozenset(".?!\n،؟！,")
 # Minimum chars before considering a boundary (avoids splitting "e.g.")
-_MIN_SENTENCE_CHARS = 15
+# Lowered from 15 → 8 because Fish Speech first-chunk latency dominates, so shorter first
+# emit-to-TTS = faster pipeline_ttfa. Subsequent sentences keep natural prosody.
+_MIN_SENTENCE_CHARS = 8
 
 
 @dataclass
@@ -83,17 +85,25 @@ async def run_realtime(
     *,
     request_id: str | None = None,
     conversation_history: list[dict[str, str]] | None = None,
+    out: dict | None = None,
+    skip_tts: bool = False,
 ) -> AsyncIterator[bytes]:
     """
     Full pipelined run: STT → LLM stream → SentenceBuffer → TTS stream.
     Yields audio bytes as Fish Speech generates them.
     First audio chunk arrives as soon as the first sentence is synthesised.
+
+    skip_tts: when True, runs STT + LLM only — yields nothing but populates out["response_text"].
+              Use this when the caller handles TTS itself (e.g. Apple say).
+
+    out (optional mutable dict): populated after generator exhausts with:
+        out["transcription"], out["language"], out["response_text"]
     """
     rid = request_id or str(uuid.uuid4())
     t_start = time.perf_counter()
     ttfa_recorded = False
 
-    # Layer 3: STT
+    # STT
     transcript = await stt_svc.transcribe(utterance_bytes, request_id=rid)
     stt_ms = int((time.perf_counter() - t_start) * 1000)
     log.info(
@@ -101,21 +111,56 @@ async def run_realtime(
         extra={"stt_ms": stt_ms, "language": transcript.language, "request_id": rid},
     )
 
-    # Layer 4: LLM streaming + SentenceBuffer
+    # Short-circuit on empty transcription
+    if not transcript.text.strip():
+        log.debug("empty transcription — skipping realtime pipeline", extra={"request_id": rid})
+        if out is not None:
+            out["transcription"] = ""
+            out["language"] = transcript.language
+            out["response_text"] = ""
+        return
+
+    # LLM streaming + SentenceBuffer
     messages = prompt_builder.build_messages(
         transcript.text, language=transcript.language, conversation_history=conversation_history
     )
 
     buf = SentenceBuffer()
+    response_sentences: list[str] = []
+
+    # LLM timing
+    t_llm = time.perf_counter()
+    llm_ttft_ms = 0
+    llm_first_token = True
+
+    # TTS timing (wall clock from first sentence start → last chunk)
+    t_tts_start: float | None = None
+    tts_ttfa_ms = 0
+    tts_ttfa_recorded = False
 
     async for token in llm_svc.generate_stream(messages, request_id=rid):
+        if llm_first_token:
+            llm_ttft_ms = int((time.perf_counter() - t_llm) * 1000)
+            llm_first_token = False
+
         sentence = buf.feed(token)
         if sentence:
+            response_sentences.append(sentence)
             log.debug("sentence emitted to tts", extra={"chars": len(sentence), "request_id": rid})
-            # Layer 5: TTS streaming — start immediately on each sentence
+
+            if skip_tts:
+                continue  # caller handles TTS — skip Fish Speech entirely
+
+            if t_tts_start is None:
+                t_tts_start = time.perf_counter()
+
             async for audio_chunk in tts_svc.synthesize_stream(
                 sentence, transcript.language, request_id=rid
             ):
+                if not tts_ttfa_recorded:
+                    tts_ttfa_ms = int((time.perf_counter() - t_tts_start) * 1000)
+                    tts_ttfa_recorded = True
+
                 if not ttfa_recorded:
                     pipeline_ttfa = int((time.perf_counter() - t_start) * 1000)
                     ttfa_recorded = True
@@ -139,13 +184,38 @@ async def run_realtime(
                     )
                 yield audio_chunk
 
+    llm_total_ms = int((time.perf_counter() - t_llm) * 1000)
+
     # Flush remaining buffer
     remaining = buf.flush()
     if remaining:
-        async for audio_chunk in tts_svc.synthesize_stream(
-            remaining, transcript.language, request_id=rid
-        ):
-            yield audio_chunk
+        response_sentences.append(remaining)
+        if not skip_tts:
+            if t_tts_start is None:
+                t_tts_start = time.perf_counter()
+            async for audio_chunk in tts_svc.synthesize_stream(
+                remaining, transcript.language, request_id=rid
+            ):
+                if not tts_ttfa_recorded:
+                    tts_ttfa_ms = int((time.perf_counter() - t_tts_start) * 1000)
+                    tts_ttfa_recorded = True
+                yield audio_chunk
+
+    tts_total_ms = int((time.perf_counter() - t_tts_start) * 1000) if t_tts_start else 0
+    total_ms = int((time.perf_counter() - t_start) * 1000)
+
+    # Populate caller context after all audio has been yielded
+    if out is not None:
+        out["transcription"]    = transcript.text
+        out["language"]         = transcript.language
+        out["response_text"]    = " ".join(response_sentences)
+        out["stt_ms"]           = stt_ms
+        out["llm_ttft_ms"]      = llm_ttft_ms
+        out["llm_total_ms"]     = llm_total_ms
+        out["tts_ttfa_ms"]      = tts_ttfa_ms
+        out["tts_total_ms"]     = tts_total_ms
+        out["pipeline_ttfa_ms"] = stt_ms + llm_ttft_ms + tts_ttfa_ms
+        out["total_ms"]         = total_ms
 
 
 @track_latency("pipeline_total")
@@ -169,7 +239,7 @@ async def run(
 
     # Skip pipeline if STT returned nothing (noise/silence)
     if not transcript.text.strip():
-        log.warning("empty transcription — skipping pipeline", extra={"request_id": rid})
+        log.debug("empty transcription — skipping pipeline", extra={"request_id": rid})
         return PipelineResult(
             transcription="",
             language=transcript.language,

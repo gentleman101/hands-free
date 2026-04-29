@@ -44,6 +44,17 @@ def _fish_url() -> str:
     return os.environ.get("HF_FISH_SPEECH_URL", "http://localhost:8001")
 
 
+# EXP-010: module-level singleton — avoids ~5-15ms TCP setup per call
+_http_client: httpx.AsyncClient | None = None
+
+
+def _tts_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.AsyncClient(timeout=60.0)
+    return _http_client
+
+
 def strip_prosody_tags(text: str) -> str:
     """Remove Fish Speech inline tags. Use only when falling back to non-Fish TTS."""
     return _TAG_RE.sub("", text).strip()
@@ -76,7 +87,7 @@ async def synthesize_stream(
 
     log.debug("tts stream start", extra={"request_id": rid, "language": language, "chars": len(text)})
 
-    async with httpx.AsyncClient(timeout=60.0).stream("POST", url, json=payload) as response:
+    async with _tts_client().stream("POST", url, json=payload) as response:
         response.raise_for_status()
         async for chunk in response.aiter_bytes(chunk_size=4096):
             if chunk:

@@ -81,10 +81,13 @@ _CHUNK_MS = 32          # sounddevice callback chunk size (ms) — 512 samples, 
 _CHUNK_SAMPLES = 512    # must be exactly 512 at 16kHz for Silero VAD
 
 # VAD state
-_SPEECH_THRESHOLD = 0.5         # Silero VAD probability threshold
-_SILENCE_DURATION_MS = 300      # ms of silence to end utterance
+_SPEECH_THRESHOLD = 0.80        # Silero VAD probability — raised from 0.7 to cut HVAC/breath false fires (EXP-011)
+_SILENCE_DURATION_MS = 600      # ms of silence to end utterance — LiveKit default is 550ms, Pipecat 500ms
 _SILENCE_CHUNKS = _SILENCE_DURATION_MS // _CHUNK_MS
+_MIN_SPEECH_CHUNKS = 8          # ~256ms minimum speech — Silero upstream default is 250ms
+_PREFIX_CHUNKS = 4              # ~128ms pre-roll prepended to each utterance (prevents first-word clipping)
 _MAX_UTTERANCE_S = 30           # hard cap to prevent runaway buffers
+_ENERGY_FALLBACK_THRESHOLD = 0.02  # RMS threshold when Silero VAD unavailable (0.01 was too sensitive)
 
 
 def _pcm_to_wav(pcm: np.ndarray, sample_rate: int = _SAMPLE_RATE) -> bytes:
@@ -113,6 +116,7 @@ class AudioCapture:
 
     def __init__(self) -> None:
         self._running = False
+        self._muted = False          # when True, VAD runs but utterances are not queued
         self._audio_queue: queue.Queue[np.ndarray] = queue.Queue()
         self._utterance_queue: asyncio.Queue[bytes] = asyncio.Queue()
         self._stream: sd.InputStream | None = None
@@ -120,6 +124,16 @@ class AudioCapture:
         self._silence_count = 0
         self._speech_buffer: list[np.ndarray] = []
         self._in_speech = False
+
+    def mute(self) -> None:
+        """Block utterances from reaching the queue (call before TTS playback)."""
+        self._muted = True
+        log.debug("audio capture muted")
+
+    def unmute(self) -> None:
+        """Re-open the utterance queue (call after TTS playback finishes)."""
+        self._muted = False
+        log.debug("audio capture unmuted")
 
     def _sd_callback(
         self,
@@ -166,6 +180,7 @@ class AudioCapture:
 
         silence_count = 0
         speech_buffer: list[np.ndarray] = []
+        pre_roll: list[np.ndarray] = []   # rolling window of recent non-speech chunks
         in_speech = False
         max_chunks = int(_MAX_UTTERANCE_S * 1000 / _CHUNK_MS)
 
@@ -185,26 +200,46 @@ class AudioCapture:
             else:
                 # Energy fallback
                 rms = float(np.sqrt(np.mean(chunk ** 2)))
-                is_speech = rms > 0.01
+                is_speech = rms > _ENERGY_FALLBACK_THRESHOLD
 
             if is_speech:
+                if not in_speech:
+                    # Speech just started — prepend pre-roll so first word isn't clipped
+                    speech_buffer = list(pre_roll)
+                    pre_roll = []
                 in_speech = True
                 silence_count = 0
                 speech_buffer.append(chunk)
             else:
+                if not in_speech:
+                    # Keep a rolling pre-roll window of recent non-speech chunks
+                    pre_roll.append(chunk)
+                    if len(pre_roll) > _PREFIX_CHUNKS:
+                        pre_roll.pop(0)
                 if in_speech:
                     silence_count += 1
                     speech_buffer.append(chunk)  # include trailing silence
                     if silence_count >= _SILENCE_CHUNKS or len(speech_buffer) >= max_chunks:
-                        audio = np.concatenate(speech_buffer)
-                        wav_bytes = _pcm_to_wav(audio)
-                        asyncio.run_coroutine_threadsafe(
-                            self._utterance_queue.put(wav_bytes), loop
-                        )
-                        log.debug(
-                            "utterance ready",
-                            extra={"chunks": len(speech_buffer), "bytes": len(wav_bytes)},
-                        )
+                        # Discard utterances shorter than minimum speech duration —
+                        # filters clicks, breath sounds, brief noise bursts
+                        speech_chunk_count = len(speech_buffer) - silence_count
+                        if speech_chunk_count < _MIN_SPEECH_CHUNKS:
+                            log.debug(
+                                "utterance too short — discarded",
+                                extra={"speech_chunks": speech_chunk_count, "min": _MIN_SPEECH_CHUNKS},
+                            )
+                        elif self._muted:
+                            log.debug("utterance suppressed (muted during TTS playback)")
+                        else:
+                            audio = np.concatenate(speech_buffer)
+                            wav_bytes = _pcm_to_wav(audio)
+                            asyncio.run_coroutine_threadsafe(
+                                self._utterance_queue.put(wav_bytes), loop
+                            )
+                            log.debug(
+                                "utterance ready",
+                                extra={"chunks": len(speech_buffer), "bytes": len(wav_bytes)},
+                            )
                         speech_buffer = []
                         in_speech = False
                         silence_count = 0
