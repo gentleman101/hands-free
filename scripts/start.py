@@ -14,6 +14,7 @@ Usage:
 import argparse
 import asyncio
 import os
+import queue
 import sys
 import threading
 import time
@@ -21,6 +22,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT))
+
+# ── shared display state (mic_loop → Gradio thread) ──────────────────────────
+_display_queue: queue.Queue = queue.Queue()
+_pipeline_status: str = "listening"  # "listening" | "processing" | "speaking"
 
 # ── defaults ──────────────────────────────────────────────────────────────────
 _DEFAULTS = {
@@ -301,6 +306,8 @@ async def mic_loop(fish_available: bool) -> None:
                 ctx: dict = {}
 
                 _status("⏳  Processing — please wait...")
+                global _pipeline_status
+                _pipeline_status = "processing"
                 capture.mute()   # block mic from queuing while we process + play
                 try:
                     if tts_engine == "fish" and fish_available:
@@ -319,11 +326,13 @@ async def mic_loop(fish_available: bool) -> None:
                         ):
                             pass  # nothing yielded; ctx populated after exhaustion
                         if ctx.get("response_text"):
+                            _pipeline_status = "speaking"
                             await _say(ctx["response_text"], ctx.get("language", "en"))
                     # Settle delay — speaker physically rings ~200ms after OutputStream closes;
                     # keeping mic muted a little longer prevents self-pickup
                     await asyncio.sleep(0.4)
                 finally:
+                    _pipeline_status = "listening"
                     capture.unmute()  # always re-open mic, even on error
 
                 transcription = ctx.get("transcription", "")
@@ -339,6 +348,17 @@ async def mic_loop(fish_available: bool) -> None:
                 said = response_text[:80] + ("…" if len(response_text) > 80 else "")
                 print()   # end the status line before printing the turn block
                 print(_fmt_turn(turn, language.upper(), heard, said, ctx))
+
+                # Push turn to Gradio display
+                _display_queue.put({
+                    "turn": turn,
+                    "lang": language.upper(),
+                    "heard": transcription,
+                    "said": response_text,
+                    "stt_ms": ctx.get("stt_ms", 0),
+                    "llm_ttft_ms": ctx.get("llm_ttft_ms", 0),
+                    "total_ms": ctx.get("total_ms", 0),
+                })
 
                 # Append this turn to history for next round
                 history.append({"role": "user", "content": transcription})
@@ -359,6 +379,90 @@ async def mic_loop(fish_available: bool) -> None:
         await capture.stop()
 
 
+# ── Gradio display ───────────────────────────────────────────────────────────
+
+def _waveform_html(state: str) -> str:
+    """Return animated waveform HTML for the given pipeline state."""
+    colours = {
+        "listening":  ("#00c853", "1.4s"),   # green, slow pulse
+        "processing": ("#ff6d00", "0.5s"),   # orange, fast pulse
+        "speaking":   ("#00b0ff", "0.6s"),   # blue, medium pulse
+    }
+    colour, speed = colours.get(state, colours["listening"])
+    label = {"listening": "🎤  Listening…", "processing": "⏳  Processing…", "speaking": "🔊  Speaking…"}.get(state, "")
+    bars = "".join(
+        f'<span style="animation-duration:{speed};animation-delay:{i*0.1:.1f}s"></span>'
+        for i in range(10)
+    )
+    return f"""
+<style>
+  .waveform {{ display:flex; align-items:center; gap:4px; height:48px; }}
+  .waveform span {{
+    display:inline-block; width:6px; border-radius:3px;
+    background:{colour};
+    animation: pulse {speed} ease-in-out infinite alternate;
+  }}
+  @keyframes pulse {{
+    from {{ height:6px; opacity:0.4; }}
+    to   {{ height:40px; opacity:1.0; }}
+  }}
+  .wlabel {{ margin-left:14px; font-size:15px; color:#555; font-family:sans-serif; }}
+</style>
+<div style="display:flex;align-items:center;padding:12px 0">
+  <div class="waveform">{bars}</div>
+  <span class="wlabel">{label}</span>
+</div>"""
+
+
+def start_gradio_display(port: int = 7860) -> None:
+    """Launch Gradio display window in a daemon thread."""
+    import gradio as gr
+
+    _turns: list[dict] = []
+
+    def _refresh():
+        while not _display_queue.empty():
+            _turns.append(_display_queue.get_nowait())
+
+        wave = _waveform_html(_pipeline_status)
+
+        if not _turns:
+            conv = "<p style='color:#aaa;font-family:sans-serif;padding:16px'>No turns yet — start speaking.</p>"
+        else:
+            parts = []
+            for t in reversed(_turns):
+                lang_badge = f"<span style='background:#007A4D;color:#fff;border-radius:4px;padding:2px 7px;font-size:11px;font-family:sans-serif'>{t['lang']}</span>"
+                metrics = f"<span style='color:#aaa;font-size:11px;font-family:monospace'>STT {t['stt_ms']}ms · LLM {t['llm_ttft_ms']}ms · Total {t['total_ms']}ms</span>"
+                parts.append(f"""
+<div style='border:1px solid #e0e0e0;border-radius:8px;padding:14px 16px;margin-bottom:10px;font-family:sans-serif'>
+  <div style='margin-bottom:8px'>Turn {t['turn']} &nbsp;{lang_badge}&nbsp;&nbsp;{metrics}</div>
+  <div style='margin-bottom:4px'><b>You:</b> {t['heard']}</div>
+  <div style='color:#007A4D'><b>Rammas:</b> {t['said']}</div>
+</div>""")
+            conv = "".join(parts)
+
+        return wave, conv
+
+    def _clear():
+        _turns.clear()
+        return _waveform_html("listening"), ""
+
+    with gr.Blocks(title="Rammas — DEWA AI Voice Assistant", theme=gr.themes.Default()) as demo:
+        gr.Markdown("## Rammas · DEWA AI Voice Assistant")
+        waveform  = gr.HTML(value=_waveform_html("listening"))
+        conv_html = gr.HTML(value="<p style='color:#aaa;font-family:sans-serif;padding:16px'>No turns yet — start speaking.</p>")
+        gr.Button("Clear conversation", size="sm").click(_clear, outputs=[waveform, conv_html])
+        demo.load(_refresh, outputs=[waveform, conv_html], every=0.5)
+
+    def _run():
+        demo.launch(server_port=port, quiet=True, prevent_thread_lock=True, show_api=False)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    time.sleep(2)  # give Gradio a moment to bind
+    print(f"  Display UI   http://localhost:{port}")
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -373,6 +477,7 @@ def main() -> None:
         os.environ["HF_PIPELINE_PHASE"] = args.phase
 
     preflight()
+    start_gradio_display()
 
     if not args.no_api:
         start_server(args.port)
