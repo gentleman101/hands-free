@@ -1,0 +1,283 @@
+# CODE_STRUCTURE — Hands-Free
+
+> **Canonical, always-current map of every meaningful file.**
+> Update this file whenever you create, rename, move, or delete a file.
+> Claude Code reads this to know where to find things — do not let it go stale.
+>
+> Last Updated: 2026-04-27
+
+---
+
+## Current Project State
+
+**Phase:** 1 — Base Pipeline (implementation complete; pending real-service integration)
+**Stack locked:** Ollama gemma4:e2b | faster-whisper | Fish Speech 1.5 | sounddevice | FastAPI
+**Target TTFA:** < 800ms (pipeline time-to-first-audio after utterance end)
+
+---
+
+## Directory Tree
+
+```
+Hands-Free/
+│
+├── backend/
+│   ├── app.py                          [COMPLETE] FastAPI aggregator; asynccontextmanager lifespan; <200 lines
+│   ├── database.py                     [COMPLETE] SQLite + aiosqlite; init_db(); insert_event() fire-and-forget
+│   ├── logging_config.py               [COMPLETE] Structured JSON logging via pythonjsonlogger.json
+│   │
+│   ├── api/
+│   │   ├── voice.py                    [COMPLETE] POST /api/voice/pipeline, /pipeline/stream, /transcribe
+│   │   └── health.py                   [COMPLETE] GET /healthz (liveness), /readyz (Ollama + Whisper check)
+│   │
+│   ├── services/
+│   │   ├── audio_capture.py            [COMPLETE] sounddevice + Silero VAD → utterance bytes (AsyncIterator)
+│   │   ├── stt.py                      [COMPLETE] faster-whisper (lru_cache); utterance bytes → TranscribeResult
+│   │   ├── llm.py                      [COMPLETE] Ollama via OpenAI SDK; generate() + generate_stream()
+│   │   ├── tts.py                      [COMPLETE] Fish Speech HTTP chunked; synthesize() + synthesize_stream()
+│   │   ├── pipeline.py                 [COMPLETE] SentenceBuffer + run() + run_realtime(); PipelineLatency
+│   │   └── prompt_builder.py           [COMPLETE] Bilingual system prompt + Fish Speech prosody rules
+│   │
+│   ├── monitoring/
+│   │   ├── __init__.py                 [EXISTS]
+│   │   └── latency_tracker.py          [COMPLETE] @track_latency decorator + LatencySpan + SQLite writer
+│   │
+│   └── tests/
+│       ├── conftest.py                 [COMPLETE] make_wav_bytes(); autouse patch on insert_event; event loop
+│       ├── services/
+│       │   ├── test_stt.py             [COMPLETE] English + Arabic transcription, empty audio, multi-segment
+│       │   ├── test_llm.py             [COMPLETE] Stream + non-stream, English + Arabic, max_tokens
+│       │   ├── test_tts.py             [COMPLETE] Audio bytes returned, tag stripping, language switch
+│       │   ├── test_pipeline.py        [COMPLETE] SentenceBuffer boundaries (EN/AR/؟), full round-trips
+│       │   ├── test_audio_capture.py   [COMPLETE] _pcm_to_wav round-trip amplitude, valid WAV header
+│       │   └── test_prompt_builder.py  [COMPLETE] System first, user last, history included, prosody in prompt
+│       └── api/
+│           └── test_voice.py           [COMPLETE] Pipeline endpoint 200, 422 on empty, latency in response
+│
+├── data/
+│   ├── metrics.db                      [EXISTS] SQLite latency store (gitignored); created by init_db()
+│   ├── benchmark_results.jsonl         [EXISTS] Append-only benchmark history; written by benchmark.py
+│   └── performance-snapshot.json       [EXISTS] Latest JSON snapshot; written by generate_report.py
+│
+├── fixtures/
+│   └── audio/
+│       ├── en_greeting.wav             [EXISTS] 1.5s, 16kHz mono, sine wave fixture
+│       ├── ar_greeting.wav             [EXISTS] 1.5s, 16kHz mono, sine wave fixture
+│       ├── en_hr_query.wav             [EXISTS] 1.5s, 16kHz mono, sine wave fixture
+│       └── ar_hr_query.wav             [EXISTS] 1.5s, 16kHz mono, sine wave fixture
+│
+├── scripts/
+│   ├── pre_push_check.sh               [COMPLETE] mypy + ruff + pytest + secrets scan + doc staleness check
+│   ├── benchmark.py                    [COMPLETE] N-iteration benchmark; p50/p95/p99; calls generate_report
+│   ├── generate_report.py              [COMPLETE] Reads metrics.db + jsonl → regenerates PERFORMANCE.md
+│   ├── start.py                        [COMPLETE] Single entry point: API server + mic loop; BT/USB device routing
+│   └── listen.py                       [COMPLETE] Standalone mic loop (no API server)
+│
+├── models/
+│   └── lora/                           [PLANNED] Phase 4 LoRA checkpoints
+│
+├── datasets/
+│   ├── raw/                            [EXISTS] (gitignored)
+│   └── processed/                      [EXISTS] v1.jsonl goes here (gitignored)
+│
+├── requirements.txt                    [EXISTS] Runtime dependencies
+├── requirements-dev.txt                [PLANNED] Dev dependencies (pytest, mypy, ruff) — currently in venv only
+├── .env.example                        [EXISTS] Required env vars template
+├── .gitignore                          [EXISTS]
+├── docker-compose.yml                  [PLANNED] Azure production: Ollama + Fish Speech CUDA
+│
+├── PERFORMANCE.md                      [EXISTS] Auto-generated by generate_report.py — NEVER edit manually
+├── DISTILLATION.md                     [EXISTS] Dataset inventory + training runs + eval scores
+├── PROJECT.md                          [EXISTS] PMBOK project log
+├── CONVENTIONS.md                      [EXISTS] Naming + style + pipeline rules
+├── INSTRUCTIONS.md                     [EXISTS] Master build guide + bug log
+└── CODE_STRUCTURE.md                   [EXISTS] This file
+```
+
+---
+
+## Service Contracts
+
+### `backend/services/audio_capture.py`
+```python
+class AudioCapture:
+    async def start(self) -> None
+    async def stop(self) -> None
+    async def utterances(self) -> AsyncIterator[bytes]
+    # Yields complete utterances (WAV bytes, 16kHz mono) after 300ms silence
+```
+
+### `backend/services/stt.py`
+```python
+@dataclass
+class TranscribeResult:
+    text: str
+    language: str        # "en" | "ar"
+    confidence: float
+    duration_ms: int
+
+@track_latency("stt")
+async def transcribe(audio_bytes: bytes, *, model_size: str = "small", language: str | None = None) -> TranscribeResult
+```
+
+### `backend/services/llm.py`
+```python
+@dataclass
+class GenerateResult:
+    text: str
+    tokens_generated: int
+    ttft_ms: int          # time-to-first-token
+    duration_ms: int
+
+@track_latency("llm_total")
+async def generate(messages: list[dict], *, max_tokens: int = 150, language: str = "en") -> GenerateResult
+
+async def generate_stream(messages: list[dict], *, max_tokens: int = 150, request_id: str) -> AsyncIterator[str]
+# First token tracked as llm_ttft via inner LatencySpan
+```
+
+### `backend/services/tts.py`
+```python
+@dataclass
+class SynthesizeResult:
+    audio_bytes: bytes
+    sample_rate: int      # 22050
+    ttfa_ms: int          # time-to-first-audio-chunk
+    duration_ms: int
+
+@track_latency("tts_total")
+async def synthesize(text: str, language: str = "en") -> SynthesizeResult
+
+async def synthesize_stream(text: str, language: str = "en", *, request_id: str) -> AsyncIterator[bytes]
+# First chunk tracked as tts_ttfa via inner LatencySpan
+```
+
+### `backend/services/pipeline.py`
+```python
+class SentenceBuffer:
+    BOUNDARIES: frozenset[str]  # {'.', '?', '!', '\n', '،', '؟', '！'}
+    _MIN_SENTENCE_CHARS: int = 15
+    def feed(self, token: str) -> str | None    # returns sentence on boundary, else None
+    def flush(self) -> str | None               # returns any remaining text
+
+@dataclass
+class PipelineLatency:
+    stt_ms: int
+    llm_ttft_ms: int
+    llm_total_ms: int
+    tts_ttfa_ms: int
+    tts_total_ms: int
+    pipeline_ttfa_ms: int   # PRIMARY METRIC: stt + llm_ttft + first_sentence_complete + tts_ttfa
+    total_ms: int
+
+@dataclass
+class PipelineResult:
+    transcription: str
+    language: str
+    response_text: str
+    audio_bytes: bytes
+    latency: PipelineLatency
+
+@track_latency("pipeline_total")
+async def run(utterance_bytes: bytes) -> PipelineResult
+
+async def run_realtime(utterance_bytes: bytes, *, request_id: str, conversation_history: list) -> AsyncIterator[bytes]
+# Yields audio chunks as they arrive; pipeline_ttfa tracked internally
+```
+
+### `backend/monitoring/latency_tracker.py`
+```python
+def track_latency(stage: str) -> Callable
+# Decorator: wraps async fn, records duration_ms to SQLite + structured log
+# Injects request_id, pipeline_phase from kwargs
+
+class LatencySpan:
+    # Async context manager for sub-stage timing (TTFT, TTFA)
+    async def __aenter__(self) -> LatencySpan
+    async def __aexit__(self, ...) -> None
+    def set_meta(self, **kwargs) -> None
+    @property
+    def elapsed_ms(self) -> int
+```
+
+---
+
+## API Endpoints
+
+| Method | Path | Description | Status |
+|---|---|---|---|
+| POST | `/api/voice/pipeline` | Full STT→LLM→TTS, returns complete audio | [COMPLETE] |
+| POST | `/api/voice/pipeline/stream` | Full pipeline, streams audio chunks (SSE) | [COMPLETE] |
+| POST | `/api/voice/transcribe` | STT only, returns text + language | [COMPLETE] |
+| GET | `/healthz` | Liveness — always 200 | [COMPLETE] |
+| GET | `/readyz` | Readiness — 503 if Ollama unreachable | [COMPLETE] |
+
+---
+
+## SQLite Schema (`data/metrics.db`)
+
+```sql
+CREATE TABLE latency_events (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    request_id      TEXT NOT NULL,
+    stage           TEXT NOT NULL,          -- stt, llm_ttft, llm_total, tts_ttfa, tts_total, pipeline_ttfa, pipeline_total
+    duration_ms     INTEGER NOT NULL,
+    ttfa_ms         INTEGER,                -- only for tts_ttfa and pipeline_ttfa stages
+    timestamp       TEXT NOT NULL,          -- ISO8601 UTC
+    language        TEXT,                   -- en | ar
+    model_version   TEXT,                   -- gemma4:e2b | lora_v1 | etc.
+    pipeline_phase  TEXT,                   -- raw | prompted | lora_v1 | lora_v2 | jais_fallback
+    success         INTEGER NOT NULL,       -- 0 | 1
+    metadata_json   TEXT                    -- extra data as JSON string
+);
+
+CREATE INDEX idx_stage_timestamp ON latency_events(stage, timestamp);
+CREATE INDEX idx_pipeline_phase ON latency_events(pipeline_phase);
+```
+
+---
+
+## Environment Variables (`.env.example`)
+
+```
+HF_OLLAMA_BASE_URL=http://localhost:11434/v1
+HF_OLLAMA_MODEL=gemma4:e2b
+HF_WHISPER_MODEL_SIZE=small
+HF_FISH_SPEECH_URL=http://localhost:8001
+HF_FISH_SPEECH_VOICE_EN=default
+HF_FISH_SPEECH_VOICE_AR=default
+HF_ADMIN_PASSWORD=
+HF_LOG_LEVEL=INFO
+HF_PIPELINE_PHASE=raw
+HF_MAX_TOKENS=150
+HF_VAD_SILENCE_MS=300
+```
+
+---
+
+## Model Paths
+
+| Model | Location | Format | Status |
+|---|---|---|---|
+| Gemma 4 E2B | Ollama managed (`gemma4:e2b`) | GGUF | [Pull in progress] |
+| Whisper small | Auto-downloaded by faster-whisper on first use | CTranslate2 | [Auto] |
+| Fish Speech 1.5 | HTTP service at `HF_FISH_SPEECH_URL` | PyTorch | [Service required] |
+| LoRA v1 | `models/lora/hands-free-v1/` | Safetensors | [Phase 4] |
+| LiteRT local | `/Users/naman/.saltpepper/models/gemma-4-E2B-it.litertlm` | LiteRT | [Not used] |
+
+---
+
+## Update Instructions (for Claude Code)
+
+| Event | Action |
+|---|---|
+| File created | Change `[PLANNED]` → `[EXISTS]` in tree |
+| File complete + tested | Change `[EXISTS]` → `[COMPLETE]` |
+| File deleted | Remove from tree; note in PROJECT.md Change Log |
+| Service signature changed | Update Service Contracts section |
+| New API endpoint | Add to API Endpoints table |
+| Schema changed | Update SQLite Schema section |
+| New env var | Add to Environment Variables section |
+| Phase changes | Update "Current Project State" header |
+
+Status markers: `[PLANNED]` `[EXISTS]` `[COMPLETE]` `[DEPRECATED]`

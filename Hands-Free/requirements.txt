@@ -1,0 +1,33 @@
+# Runtime dependencies — Hands-Free
+# Always check latest versions before upgrading in production
+
+# Backend
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+pydantic>=2.10.0
+pydantic-settings>=2.7.0
+python-multipart>=0.0.20
+
+# LLM — Ollama via OpenAI-compatible SDK
+openai>=1.68.0
+
+# STT — faster-whisper with Silero VAD
+faster-whisper>=1.1.0
+
+# TTS — Fish Speech (install separately, see below)
+# pip install fish-speech  OR  clone https://github.com/fishaudio/fish-speech
+# Note: Fish Speech requires torch; install torch first for your platform
+
+# Audio I/O
+sounddevice>=0.5.1
+soundfile>=0.13.0
+numpy>=2.2.0
+
+# Database
+aiosqlite>=0.21.0
+
+# Utilities
+python-dotenv>=1.1.0
+python-json-logger>=3.2.0
+httpx>=0.28.0          # async HTTP for Fish Speech calls
+gradio>=4.0.0          # companion display UI

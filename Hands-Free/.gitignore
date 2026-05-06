@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual env
+venv*/
+.venv*/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Environment
+.env
+.env.local
+.env.*.local
+config.windows.yaml
+config.mac.yaml
+
+# Data
+data/*.db
+data/*.db-journal
+data/*.jsonl
+datasets/raw/
+datasets/processed/
+
+# Models (large, downloaded)
+models/*.gguf
+models/*.bin
+models/*.safetensors
+~/.cache/
+
+# Generated assets
+assets/fillers/*.wav
+
+# Logs
+*.log
+logs/
+
+# OS
+Thumbs.db
+desktop.ini
