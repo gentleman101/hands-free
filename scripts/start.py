@@ -38,6 +38,7 @@ _DEFAULTS = {
     "HF_MAX_TOKENS": "200",              # short conversational replies — reasoning is OFF, no need for room
     "PYTORCH_ENABLE_MPS_FALLBACK": "1",  # allow Metal ops to fall back to CPU if unsupported
     "HF_TTS_ENGINE": "say",              # "say" = Apple built-in (fast) | "fish" = Fish Speech (quality)
+    "HF_HUB_OFFLINE": "1",              # use cached HuggingFace models — no network calls on startup
 }
 
 
@@ -381,36 +382,140 @@ async def mic_loop(fish_available: bool) -> None:
 
 # ── Gradio display ───────────────────────────────────────────────────────────
 
-def _waveform_html(state: str) -> str:
-    """Return animated waveform HTML for the given pipeline state."""
-    colours = {
-        "listening":  ("#00c853", "1.4s"),   # green, slow pulse
-        "processing": ("#ff6d00", "0.5s"),   # orange, fast pulse
-        "speaking":   ("#00b0ff", "0.6s"),   # blue, medium pulse
-    }
-    colour, speed = colours.get(state, colours["listening"])
-    label = {"listening": "🎤  Listening…", "processing": "⏳  Processing…", "speaking": "🔊  Speaking…"}.get(state, "")
+_STATE_CFG = {
+    "listening":  {"colour": "#00c853", "speed": "1.4s", "label": "Listening",  "emoji": "🎤"},
+    "processing": {"colour": "#ff6d00", "speed": "0.5s", "label": "Processing", "emoji": "⏳"},
+    "speaking":   {"colour": "#00b0ff", "speed": "0.6s", "label": "Speaking",   "emoji": "🔊"},
+}
+
+def _build_ui_html(state: str, turns: list[dict]) -> str:
+    """Full-page dark UI: waveform background, status, conversation, clear button — all in one HTML block."""
+    cfg = _STATE_CFG.get(state, _STATE_CFG["listening"])
+    colour, speed = cfg["colour"], cfg["speed"]
+
+    # 32 bars, evenly spaced edge-to-edge
     bars = "".join(
-        f'<span style="animation-duration:{speed};animation-delay:{i*0.1:.1f}s"></span>'
-        for i in range(10)
+        f'<div class="bar" style="animation-duration:{speed};animation-delay:{i * 0.08:.2f}s;left:{i * 3.125:.2f}%"></div>'
+        for i in range(32)
     )
+
+    # Conversation cards (newest first)
+    if not turns:
+        cards = """
+<div style='display:flex;flex-direction:column;align-items:center;justify-content:center;
+            height:300px;gap:12px'>
+  <div style='font-size:48px;opacity:0.3'>🎤</div>
+  <div style='color:rgba(255,255,255,0.3);font-size:15px;letter-spacing:0.5px'>Start speaking to begin</div>
+</div>"""
+    else:
+        parts = []
+        for t in reversed(turns):
+            lang_badge = (
+                f"<span style='background:{colour}22;border:1px solid {colour}66;"
+                f"color:{colour};border-radius:4px;padding:2px 8px;font-size:11px;"
+                f"font-weight:700;letter-spacing:0.5px'>{t['lang']}</span>"
+            )
+            metrics = (
+                f"<span style='color:rgba(255,255,255,0.35);font-size:11px;font-family:monospace'>"
+                f"STT {t['stt_ms']}ms &nbsp;·&nbsp; LLM {t['llm_ttft_ms']}ms &nbsp;·&nbsp; Total <b style='color:rgba(255,255,255,0.6)'>{t['total_ms']}ms</b></span>"
+            )
+            parts.append(f"""
+<div style='background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);
+            border-radius:12px;padding:16px 18px;margin-bottom:10px;color:#fff;
+            font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif'>
+  <div style='display:flex;align-items:center;gap:10px;margin-bottom:10px'>
+    <span style='color:rgba(255,255,255,0.3);font-size:11px;letter-spacing:0.5px'>TURN {t['turn']}</span>
+    {lang_badge}
+    <span style='flex:1'></span>
+    {metrics}
+  </div>
+  <div style='margin-bottom:6px;font-size:14px;line-height:1.5'>
+    <span style='color:rgba(255,255,255,0.4);font-size:12px;text-transform:uppercase;
+                 letter-spacing:0.8px;margin-right:8px'>You</span>{t['heard']}
+  </div>
+  <div style='font-size:14px;line-height:1.5'>
+    <span style='color:{colour};font-size:12px;text-transform:uppercase;
+                 letter-spacing:0.8px;margin-right:8px'>Rammas</span>{t['said']}
+  </div>
+</div>""")
+        cards = "".join(parts)
+
     return f"""
 <style>
-  .waveform {{ display:flex; align-items:center; gap:4px; height:48px; }}
-  .waveform span {{
-    display:inline-block; width:6px; border-radius:3px;
-    background:{colour};
-    animation: pulse {speed} ease-in-out infinite alternate;
+  /* hide Gradio chrome */
+  footer, .gradio-container > .top-panel, #component-0 > .label {{display:none!important}}
+  body, .gradio-container, .main {{
+    background:#06090f!important; margin:0!important; padding:0!important;
+    min-height:100vh!important;
   }}
-  @keyframes pulse {{
-    from {{ height:6px; opacity:0.4; }}
-    to   {{ height:40px; opacity:1.0; }}
+  .rmwrap {{
+    position:relative; min-height:100vh; overflow:hidden;
+    background:#06090f;
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    padding:28px 32px 32px;
+    box-sizing:border-box;
   }}
-  .wlabel {{ margin-left:14px; font-size:15px; color:#555; font-family:sans-serif; }}
+  .rm-bg {{
+    position:fixed; inset:0; pointer-events:none; z-index:0; overflow:hidden;
+  }}
+  .bar {{
+    position:absolute; bottom:0; width:2.8%; border-radius:3px 3px 0 0;
+    background:{colour}; opacity:0.10;
+    animation: barpulse {speed} ease-in-out infinite alternate;
+  }}
+  @keyframes barpulse {{
+    from {{ height:5%; }}
+    to   {{ height:80%; }}
+  }}
+  .rm-fg {{ position:relative; z-index:1; max-width:860px; margin:0 auto; }}
+  .rm-header {{
+    display:flex; align-items:center; justify-content:space-between;
+    margin-bottom:28px; padding-bottom:18px;
+    border-bottom:1px solid rgba(255,255,255,0.07);
+  }}
+  .rm-title {{
+    font-size:18px; font-weight:700; color:#fff; letter-spacing:0.2px;
+  }}
+  .rm-title span {{ color:rgba(255,255,255,0.35); font-weight:400; }}
+  .rm-status {{
+    display:flex; align-items:center; gap:8px;
+    font-size:13px; font-weight:700; color:{colour};
+    letter-spacing:1.5px; text-transform:uppercase;
+  }}
+  .rm-dot {{
+    width:8px; height:8px; border-radius:50%; background:{colour};
+    box-shadow:0 0 8px {colour};
+    animation: dotpulse {speed} ease-in-out infinite alternate;
+  }}
+  @keyframes dotpulse {{
+    from {{ opacity:0.4; transform:scale(0.8); }}
+    to   {{ opacity:1.0; transform:scale(1.2); }}
+  }}
+  .rm-conv {{ padding-bottom:16px; }}
+  .rm-clear {{
+    margin-top:8px; cursor:pointer;
+    background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1);
+    color:rgba(255,255,255,0.4); border-radius:8px; padding:8px 20px;
+    font-size:12px; letter-spacing:0.5px; font-family:inherit;
+    transition:all 0.2s;
+  }}
+  .rm-clear:hover {{ background:rgba(255,255,255,0.1); color:#fff; }}
 </style>
-<div style="display:flex;align-items:center;padding:12px 0">
-  <div class="waveform">{bars}</div>
-  <span class="wlabel">{label}</span>
+<div class="rmwrap">
+  <div class="rm-bg">{bars}</div>
+  <div class="rm-fg">
+    <div class="rm-header">
+      <span class="rm-title">Rammas &nbsp;<span>· DEWA AI Voice Assistant</span></span>
+      <div class="rm-status">
+        <div class="rm-dot"></div>
+        {cfg['label']}
+      </div>
+    </div>
+    <div class="rm-conv">{cards}</div>
+    <button class="rm-clear" onclick="this.dispatchEvent(new CustomEvent('clear-conv',{{bubbles:true}}))">
+      Clear conversation
+    </button>
+  </div>
 </div>"""
 
 
@@ -423,39 +528,20 @@ def start_gradio_display(port: int = 7860) -> None:
     def _refresh():
         while not _display_queue.empty():
             _turns.append(_display_queue.get_nowait())
-
-        wave = _waveform_html(_pipeline_status)
-
-        if not _turns:
-            conv = "<p style='color:#aaa;font-family:sans-serif;padding:16px'>No turns yet — start speaking.</p>"
-        else:
-            parts = []
-            for t in reversed(_turns):
-                lang_badge = f"<span style='background:#007A4D;color:#fff;border-radius:4px;padding:2px 7px;font-size:11px;font-family:sans-serif'>{t['lang']}</span>"
-                metrics = f"<span style='color:#aaa;font-size:11px;font-family:monospace'>STT {t['stt_ms']}ms · LLM {t['llm_ttft_ms']}ms · Total {t['total_ms']}ms</span>"
-                parts.append(f"""
-<div style='border:1px solid #e0e0e0;border-radius:8px;padding:14px 16px;margin-bottom:10px;font-family:sans-serif'>
-  <div style='margin-bottom:8px'>Turn {t['turn']} &nbsp;{lang_badge}&nbsp;&nbsp;{metrics}</div>
-  <div style='margin-bottom:4px'><b>You:</b> {t['heard']}</div>
-  <div style='color:#007A4D'><b>Rammas:</b> {t['said']}</div>
-</div>""")
-            conv = "".join(parts)
-
-        return wave, conv
+        return _build_ui_html(_pipeline_status, _turns)
 
     def _clear():
         _turns.clear()
-        return _waveform_html("listening"), ""
+        return _build_ui_html("listening", [])
 
-    with gr.Blocks(title="Rammas — DEWA AI Voice Assistant", theme=gr.themes.Default()) as demo:
-        gr.Markdown("## Rammas · DEWA AI Voice Assistant")
-        waveform  = gr.HTML(value=_waveform_html("listening"))
-        conv_html = gr.HTML(value="<p style='color:#aaa;font-family:sans-serif;padding:16px'>No turns yet — start speaking.</p>")
-        gr.Button("Clear conversation", size="sm").click(_clear, outputs=[waveform, conv_html])
-        demo.load(_refresh, outputs=[waveform, conv_html], every=0.5)
+    with gr.Blocks(title="Rammas — DEWA AI Voice Assistant") as demo:
+        panel = gr.HTML(value=_build_ui_html("listening", []))
+        clr   = gr.Button("__clear__", visible=False)
+        clr.click(_clear, outputs=[panel])
+        gr.Timer(value=0.5).tick(_refresh, outputs=[panel])
 
     def _run():
-        demo.launch(server_port=port, quiet=True, prevent_thread_lock=True, show_api=False)
+        demo.launch(server_port=port, quiet=True, prevent_thread_lock=True)
 
     t = threading.Thread(target=_run, daemon=True)
     t.start()
