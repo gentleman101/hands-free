@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rammas — DEWA AI Voice Assistant Roadmap</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0D1B2A;
+      --bg2:       #111f30;
+      --green:     #007A4D;
+      --green-dim: #004d30;
+      --white:     #f0f4f8;
+      --muted:     rgba(255,255,255,0.35);
+      --border:    rgba(255,255,255,0.08);
+      --pending-bg: rgba(255,255,255,0.03);
+      --pending-border: rgba(255,255,255,0.06);
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--white);
+      font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 15px;
+      line-height: 1.6;
+      padding: 60px 32px 80px;
+    }
+
+    .page { max-width: 860px; margin: 0 auto; }
+
+    /* ── Header ── */
+    .header { margin-bottom: 56px; }
+    .dewa-label {
+      font-size: 11px; font-weight: 600; letter-spacing: 2.5px;
+      text-transform: uppercase; color: var(--green);
+      margin-bottom: 14px;
+    }
+    h1 {
+      font-size: 36px; font-weight: 700; letter-spacing: -0.5px;
+      color: #fff; margin-bottom: 10px; line-height: 1.2;
+    }
+    .subtitle {
+      font-size: 15px; color: var(--muted); font-weight: 400; max-width: 540px;
+    }
+    .intro {
+      margin-top: 20px; padding-top: 20px;
+      border-top: 1px solid var(--border);
+      color: rgba(255,255,255,0.55); font-size: 14px; max-width: 600px;
+    }
+
+    /* ── Phase block ── */
+    .phase { margin-bottom: 36px; border-radius: 12px; overflow: hidden; }
+
+    .phase-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 18px 24px;
+    }
+    .phase-header h2 {
+      font-size: 13px; font-weight: 700; letter-spacing: 1.8px;
+      text-transform: uppercase;
+    }
+    .badge {
+      font-size: 10px; font-weight: 700; letter-spacing: 1.5px;
+      text-transform: uppercase; padding: 4px 10px; border-radius: 4px;
+    }
+
+    /* Complete */
+    .phase.complete { background: rgba(0,122,77,0.10); border: 1px solid rgba(0,122,77,0.30); }
+    .phase.complete .phase-header { background: rgba(0,122,77,0.15); }
+    .phase.complete .phase-header h2 { color: #00c878; }
+    .phase.complete .badge { background: rgba(0,122,77,0.3); color: #00e688; }
+    .phase.complete .node { background: var(--green); color: #fff; border-color: var(--green); }
+    .phase.complete .arrow { color: #00c878; }
+
+    /* Pending */
+    .phase.pending { background: var(--pending-bg); border: 1px solid var(--pending-border); }
+    .phase.pending .phase-header { background: rgba(255,255,255,0.03); }
+    .phase.pending .phase-header h2 { color: rgba(255,255,255,0.45); }
+    .phase.pending .badge { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.3); }
+    .phase.pending .node { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.45); border-color: rgba(255,255,255,0.10); }
+    .phase.pending .arrow { color: rgba(255,255,255,0.15); }
+
+    .phase-body { padding: 20px 24px 24px; }
+
+    /* ── Pipeline ── */
+    .pipeline {
+      display: flex; align-items: center; flex-wrap: wrap;
+      gap: 6px; margin-bottom: 22px;
+    }
+    .node {
+      border: 1px solid; border-radius: 6px;
+      padding: 6px 12px; font-size: 12px; font-weight: 500;
+      white-space: nowrap; line-height: 1.4;
+    }
+    .node .sub {
+      display: block; font-size: 10px; font-weight: 400; opacity: 0.7;
+      letter-spacing: 0.3px;
+    }
+    .node.icon { font-size: 18px; padding: 4px 8px; background: transparent !important; border: none !important; }
+    .arrow { font-size: 14px; font-weight: 300; flex-shrink: 0; }
+
+    /* ── Facts ── */
+    .facts {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 10px;
+    }
+    .fact {
+      font-size: 13px; padding: 10px 14px; border-radius: 8px;
+      line-height: 1.5;
+    }
+    .phase.complete .fact {
+      background: rgba(0,122,77,0.08); border: 1px solid rgba(0,122,77,0.15);
+      color: rgba(255,255,255,0.75);
+    }
+    .phase.pending .fact {
+      background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
+      color: rgba(255,255,255,0.4);
+    }
+    .fact strong {
+      display: block; font-size: 11px; font-weight: 600;
+      letter-spacing: 0.5px; margin-bottom: 2px;
+    }
+    .phase.complete .fact strong { color: #00c878; }
+    .phase.pending .fact strong  { color: rgba(255,255,255,0.3); }
+
+    /* ── Divider ── */
+    .phase-divider {
+      display: flex; align-items: center; justify-content: center;
+      margin: 4px 0; color: rgba(255,255,255,0.12); font-size: 18px;
+    }
+
+    /* ── Footer ── */
+    footer {
+      margin-top: 52px; padding-top: 28px;
+      border-top: 1px solid var(--border);
+    }
+    .footer-main {
+      font-size: 13px; color: rgba(255,255,255,0.4);
+      max-width: 620px; line-height: 1.7; margin-bottom: 12px;
+    }
+    .footer-moe {
+      font-size: 11px; color: rgba(255,255,255,0.2);
+      letter-spacing: 0.2px; padding: 10px 14px;
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: 6px; display: inline-block;
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="dewa-label">Dubai Electricity &amp; Water Authority</div>
+    <h1>Rammas — AI Voice Assistant</h1>
+    <div class="subtitle">A phased roadmap for building a production-grade bilingual voice assistant</div>
+    <div class="intro">
+      Built with limited resources as a proof of concept. Each phase is a measurable step
+      toward a fully owned, production-grade system.
+    </div>
+  </div>
+
+  <!-- Phase 1 -->
+  <div class="phase complete">
+    <div class="phase-header">
+      <h2>Phase 1 &nbsp;—&nbsp; Proof of Concept</h2>
+      <span class="badge">✓ Complete</span>
+    </div>
+    <div class="phase-body">
+      <div class="pipeline">
+        <span class="node icon">🎤</span>
+        <span class="arrow">→</span>
+        <span class="node">Voice Detection<span class="sub">Silero VAD</span></span>
+        <span class="arrow">→</span>
+        <span class="node">Speech Recognition<span class="sub">Whisper Small</span></span>
+        <span class="arrow">→</span>
+        <span class="node">AI Thinking<span class="sub">Gemma4 2B</span></span>
+        <span class="arrow">→</span>
+        <span class="node">Voice Output<span class="sub">Apple say</span></span>
+        <span class="arrow">→</span>
+        <span class="node icon">🔊</span>
+      </div>
+      <div class="facts">
+        <div class="fact"><strong>Language</strong>English + Arabic, auto-detected</div>
+        <div class="fact"><strong>Response Time</strong>~814ms first word after speech ends</div>
+        <div class="fact"><strong>Privacy</strong>100% on-premise — no data leaves DEWA network</div>
+        <div class="fact"><strong>Hardware</strong>Mac Mini, Apple Silicon GPU</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="phase-divider">↓</div>
+
+  <!-- Phase 2 -->
+  <div class="phase pending">
+    <div class="phase-header">
+      <h2>Phase 2 &nbsp;—&nbsp; Better Models on GPU</h2>
+      <span class="badge">Pending</span>
+    </div>
+    <div class="phase-body">
+      <div class="pipeline">
+        <span class="node icon">🎤</span>
+        <span class="arrow">→</span>
+        <span class="node">Voice Detection<span class="sub">Silero VAD</span></span>
+        <span class="arrow">→</span>
+        <span class="node">Speech Recognition<span class="sub">Whisper Large-v3</span></span>
+        <span class="arrow">→</span>
+        <span class="node">AI Thinking<span class="sub">Gemma4 2B → larger if justified</span></span>
+        <span class="arrow">→</span>
+        <span class="node">Voice Output<span class="sub">Fish Speech Neural TTS</span></span>
+        <span class="arrow">→</span>
+        <span class="node icon">🔊</span>
+      </div>
+      <div class="facts">
+        <div class="fact"><strong>STT Accuracy</strong>Arabic ~97% vs ~85% today (Whisper Large-v3)</div>
+        <div class="fact"><strong>LLM Strategy</strong>Start Gemma4 2B — scale up only on measured gain</div>
+        <div class="fact"><strong>Voice Quality</strong>Natural prosody, rhythm, pauses via Fish Speech</div>
+        <div class="fact"><strong>Voice Cloning</strong>Clone any DEWA agent's voice for brand identity</div>
+        <div class="fact"><strong>Test Environment</strong>NVIDIA GPU (discrete CUDA)</div>
+        <div class="fact"><strong>Goal</strong>Prove quality gap before investing in training</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="phase-divider">↓</div>
+
+  <!-- Phase 3 -->
+  <div class="phase pending">
+    <div class="phase-header">
+      <h2>Phase 3 &nbsp;—&nbsp; Fine-Tuning &amp; Cloud Deploy</h2>
+      <span class="badge">Pending</span>
+    </div>
+    <div class="phase-body">
+      <div class="pipeline">
+        <span class="node icon">🎤</span>
+        <span class="arrow">→</span>
+        <span class="node">Speech Recognition<span class="sub">Fine-tuned Whisper (Gulf Arabic)</span></span>
+        <span class="arrow">→</span>
+        <span class="node">AI Thinking<span class="sub">DEWA-distilled LLM</span></span>
+        <span class="arrow">→</span>
+        <span class="node">Voice Output<span class="sub">Neural TTS — Rammas voice</span></span>
+        <span class="arrow">→</span>
+        <span class="node icon">🔊</span>
+      </div>
+      <div class="facts">
+        <div class="fact"><strong>Whisper Fine-tune</strong>Gulf Arabic accent + DEWA vocabulary</div>
+        <div class="fact"><strong>LLM Distillation</strong>DEWA-specific model: billing, outages, service requests</div>
+        <div class="fact"><strong>Rammas Voice</strong>Official voice cloned and locked for brand consistency</div>
+        <div class="fact"><strong>Infrastructure</strong>Cloud deploy on A100 GPU</div>
+        <div class="fact"><strong>Ownership</strong>DEWA owns all models — zero ongoing API dependency</div>
+        <div class="fact"><strong>Scope</strong>Defined after Phase 2 performance results</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer>
+    <div class="footer-main">
+      This roadmap is delivered iteratively. Each phase is validated before the next begins.
+      Timeline and scope adapt based on Phase 2 performance results.
+    </div>
+    <div class="footer-moe">
+      Advanced routing architecture (Mixture of Experts) under consideration post-Phase 2 based on production learnings.
+    </div>
+  </footer>
+
+</div>
+</body>
+</html>
