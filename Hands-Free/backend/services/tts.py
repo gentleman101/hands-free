@@ -18,6 +18,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import AsyncIterator
 
+import base64
+from pathlib import Path
+
 import httpx
 
 from backend.database import fire_and_forget, insert_event
@@ -37,6 +40,28 @@ class SynthesizeResult:
     sample_rate: int
     ttfa_ms: int
     duration_ms: int
+
+
+_VOICES_DIR = Path(__file__).parent.parent.parent / "assets" / "voices"
+
+_REFERENCE_AUDIO: dict[str, bytes] = {}
+_REFERENCE_TEXT: dict[str, str] = {
+    "ar": "مرحباً، أنا رمّاس، مساعدك الذكي من هيئة كهرباء ومياه دبي. كيف يمكنني مساعدتك اليوم؟",
+    "en": "Hello, I'm Rammas, your smart assistant from Dubai Electricity and Water Authority. How can I help you today?",
+}
+_REFERENCE_FILES: dict[str, str] = {
+    "ar": "hamdan_ar.wav",
+    "en": "brian_en.wav",
+}
+
+
+def _get_reference_audio(language: str) -> bytes | None:
+    """Lazy-load and cache reference audio bytes for voice cloning."""
+    if language not in _REFERENCE_AUDIO:
+        path = _VOICES_DIR / _REFERENCE_FILES.get(language, _REFERENCE_FILES["en"])
+        if path.exists():
+            _REFERENCE_AUDIO[language] = path.read_bytes()
+    return _REFERENCE_AUDIO.get(language)
 
 
 def _fish_url() -> str:
@@ -89,12 +114,24 @@ async def synthesize_stream(
     t0 = time.perf_counter()
     ttfa_logged = False
 
+    ref_audio = _get_reference_audio(language)
     payload = {
         "text": text,
         "streaming": True,
         "format": "wav",
-        "chunk_length": 200,           # smaller chunks = lower TTFA
+        "chunk_length": 200,
         "normalize": True,
+        **(
+            {
+                "references": [
+                    {
+                        "audio": base64.b64encode(ref_audio).decode(),
+                        "text": _REFERENCE_TEXT.get(language, _REFERENCE_TEXT["en"]),
+                    }
+                ]
+            }
+            if ref_audio else {}
+        ),
     }
 
     log.debug(
