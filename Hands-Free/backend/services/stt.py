@@ -21,7 +21,6 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 import numpy as np
-import soundfile as sf  # type: ignore[import-untyped]
 
 from backend.monitoring.latency_tracker import track_latency
 
@@ -107,6 +106,8 @@ def _transcribe_sync(audio_bytes: bytes, model_size: str) -> TranscribeResult:
     model = _get_model(model_size, device, compute)
 
     t0 = time.perf_counter()
+
+    import soundfile as sf  # type: ignore[import-untyped]  # lazy: not installed in test env
 
     # Read WAV bytes → float32 mono numpy
     audio_np, sr = sf.read(io.BytesIO(audio_bytes), dtype="float32")

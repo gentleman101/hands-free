@@ -27,7 +27,7 @@ log = logging.getLogger(__name__)
 
 
 # Fish Speech S2 inline tag pattern — strip when falling back to non-Fish TTS
-_TAG_RE = re.compile(r"\[([a-z_]+)\]", re.IGNORECASE)
+_TAG_RE = re.compile(r"\[/?([a-z_]+)\]", re.IGNORECASE)
 _DEFAULT_SAMPLE_RATE = 44100  # Fish Speech firefly_gan_vq output rate
 
 

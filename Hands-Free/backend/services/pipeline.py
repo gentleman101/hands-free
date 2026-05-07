@@ -22,7 +22,6 @@ from typing import AsyncIterator
 
 from backend.database import fire_and_forget, insert_event
 from backend.services import llm_client, prompt_builder
-from backend.services import stt as stt_svc
 from backend.services import tts as tts_svc
 from backend.services.filler import FillerPlayer
 
@@ -107,6 +106,8 @@ async def run_realtime(
 
     Populates `out` (if given) with transcription, language, and final response.
     """
+    from backend.services import stt as stt_svc  # lazy: avoids soundfile at import time
+
     rid = request_id or str(uuid.uuid4())
     t_pipeline_start = time.perf_counter()
 
