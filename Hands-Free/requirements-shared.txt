@@ -1,0 +1,20 @@
+# Shared dependencies — installed on both Windows (client) and Mac (server)
+
+# Backend framework
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+pydantic>=2.10.0
+pydantic-settings>=2.7.0
+python-multipart>=0.0.20
+
+# HTTP client (for LLM RPC + Fish Speech calls)
+httpx>=0.28.0
+
+# Database (latency metrics)
+aiosqlite>=0.21.0
+
+# Utilities
+python-dotenv>=1.1.0
+python-json-logger>=3.2.0
+pyyaml>=6.0.0
+numpy>=2.2.0

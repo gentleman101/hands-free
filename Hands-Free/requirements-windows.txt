@@ -1,0 +1,21 @@
+# Windows (client) dependencies — installed alongside requirements-shared.txt
+# Hardware: RTX A3000 4GB CUDA + 32GB RAM, Windows 11
+
+# STT — faster-whisper with CUDA backend
+# CTranslate2 auto-detects CUDA; install CUDA 12 + cuDNN 9 separately
+faster-whisper>=1.1.0
+
+# TTS — Fish Speech (install separately; runs as sidecar on port 8001)
+# pip install fish-speech  OR clone https://github.com/fishaudio/fish-speech
+# Note: requires torch with CUDA
+
+# VAD — TEN VAD (better than Silero for voice agent turn-taking)
+# https://github.com/TEN-framework/ten-vad
+# pip install ten-vad
+
+# Audio I/O
+sounddevice>=0.5.1
+soundfile>=0.13.0
+
+# Companion display UI (optional)
+gradio>=4.0.0

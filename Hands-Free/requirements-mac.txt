@@ -1,0 +1,6 @@
+# Mac Mini (server) dependencies — installed alongside requirements-shared.txt
+# Hardware: Apple Silicon M4 16GB unified memory
+
+# LLM — llama.cpp with Metal backend
+# Install with: CMAKE_ARGS="-DGGML_METAL=on" pip install llama-cpp-python --upgrade --no-cache-dir
+llama-cpp-python>=0.3.0
