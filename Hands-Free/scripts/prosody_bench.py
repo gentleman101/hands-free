@@ -21,7 +21,7 @@ import time
 
 import httpx
 
-FISH_URL = "http://localhost:8001/v1/tts"
+FISH_URL = "http://172.29.211.12:8001/v1/tts"
 
 SNIPPETS = [
     {
@@ -80,31 +80,17 @@ async def bench_one(client: httpx.AsyncClient, snippet: dict) -> None:
     print(f"  Total    : {total_ms:.0f} ms")
     print(f"  Audio    : {len(audio_bytes) / 1024:.1f} KB")
 
-    # Play audio
-    try:
-        import sounddevice as sd
-        import soundfile as sf
-        import io
-        audio_np, sr = sf.read(io.BytesIO(audio_bytes), dtype="float32")
-        print(f"  Playing  : {len(audio_np)/sr:.1f}s @ {sr}Hz ...")
-        sd.play(audio_np, sr)
-        sd.wait()
-    except Exception as e:
-        print(f"  Playback skipped: {e}")
-        # Save as proper WAV with header
-        import wave, io as _io
-        out = f"prosody_bench_{label.replace(' ', '_')}.wav"
-        try:
-            # Try writing as-is first (might already be WAV)
-            with wave.open(out, "wb") as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)       # 16-bit
-                wf.setframerate(44100)   # Fish Speech default
-                wf.writeframes(audio_bytes)
-        except Exception:
-            with open(out, "wb") as f:
-                f.write(audio_bytes)
-        print(f"  Saved to : {out}")
+    # Save as WAV and open with Windows default player (AirPods / default device)
+    import wave, os as _os, subprocess
+    out = f"prosody_bench_{label.replace(' ', '_')}.wav"
+    with wave.open(out, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(44100)
+        wf.writeframes(audio_bytes)
+    abs_out = _os.path.abspath(out)
+    print(f"  Saved to : {abs_out}")
+    subprocess.Popen(["cmd", "/c", "start", "", abs_out])
 
 
 async def main() -> None:

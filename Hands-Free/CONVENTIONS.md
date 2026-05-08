@@ -1,115 +1,130 @@
 # CONVENTIONS — Hands-Free (Bilingual Voice AI)
 
 > Claude reads this before any work. Keep it short, specific, and current.
-> This is the style rulebook — see `PROJECT.md` for narrative history, `CODE_STRUCTURE.md` for live file map.
+> Style rulebook — see PROJECT.md for narrative, CODE_STRUCTURE.md for live file map.
+>
+> Last Updated: 2026-05-08
+
+---
 
 ## Naming
 
 - **Python modules:** `snake_case.py`
 - **Python classes:** `PascalCase`
 - **Python functions / vars:** `snake_case`
-- **Vue components:** `PascalCase.vue` (e.g. `VoicePanel.vue`)
-- **Vue composables:** `useX.js` (e.g. `useVoicePipeline.js`)
-- **Vue views:** `PascalCase.vue` in `src/views/`
-- **CSS classes:** `kebab-case`, scoped styles only
-- **Env vars:** `SCREAMING_SNAKE_CASE`, prefixed `HF_` (e.g. `HF_GEMMA_MODEL_PATH`)
+- **Env vars:** `SCREAMING_SNAKE_CASE`, prefixed `HF_` (e.g. `HF_LLM_SERVICE_URL`)
 
 ## File Structure
 
-See `CODE_STRUCTURE.md` — that file is the canonical, always-current map. This section intentionally defers to it.
+See `CODE_STRUCTURE.md` — that file is the canonical, always-current map.
 
 ## Soft File Size Caps
 
-- Function: 50 lines
-- Vue SFC: 250 lines
-- Composable / util: 200 lines
-- Backend service / route: 400 lines
-- Aggregator (`app.py`, `main.py`): 200 lines
-- Test file: 500 lines
+| Unit | Cap |
+|---|---|
+| Function | 50 lines |
+| Backend service / route | 400 lines |
+| Aggregator (`app.py`) | 200 lines |
+| Test file | 500 lines |
 
 Before appending to any file, check its current line count. If adding would breach the cap, extract first.
 
-## Models & Hardware
+---
 
-- LLM: Ollama serving `gemma4:e2b` — `ollama pull gemma4:e2b` before first run
-- LiteRT local model (`/Users/naman/.saltpepper/models/gemma-4-E2B-it.litertlm`) is NOT used in pipeline (Ollama replaces it; kept for reference)
-- Hardware: Mac Mini Apple Silicon — Metal/MLX via Ollama; Fish Speech on MPS (slow, acceptable for POC)
-- Do NOT load any model at import time; load lazily on first request or `/readyz` warmup
-- Production (Azure): same Ollama Docker image, CUDA GPU for Fish Speech real-time
+## Machine Roles
+
+| Role | Machine | Services |
+|---|---|---|
+| `client` | Windows (RTX A3000) | audio_capture, stt, intent_classifier, filler, tts, pipeline, llm_client, app |
+| `server` | Mac Mini (M4) | llm_server |
+
+Set via `HF_MACHINE_ROLE` in `.env`. The `is_client` / `is_server` helpers in `config.py` guard role-specific code paths.
+
+---
 
 ## Pipeline Services
 
-| Service | Library | Key detail |
+| Service | Library / Backend | Key detail |
 |---|---|---|
-| STT | `faster-whisper` | Silero VAD built-in; use utterance-triggered mode, not streaming |
-| LLM | Ollama `gemma4:e2b` | OpenAI SDK `stream=True`; `base_url=HF_OLLAMA_BASE_URL` |
-| TTS | `fish-speech` 1.5 | HTTP chunked streaming; DAC decoder only; MPS on Mac |
-| Audio | `sounddevice` | 16kHz capture, 22050Hz playback |
+| VAD | TEN VAD (`ten-vad`) + Silero fallback | Threshold 0.80; 600ms silence; 128ms pre-roll |
+| STT | `faster-whisper` large-v3-turbo CUDA INT8 | Beam=1; EN/AR gate (>0.30 prob); confidence gates; script validation |
+| Intent | TF-IDF char n-gram (scikit-learn) | 7 intents; bilingual; 0.46ms; threshold 0.15 |
+| Filler | Pre-generated WAVs in memory | 84 clips (7×2×6); yields bytes like TTS; no network call |
+| LLM | JAIS-2 8B Q4 via llama.cpp (Mac) | HTTP RPC; pooled httpx; NDJSON stream; 3-retry |
+| TTS | Fish Speech 1.5 (WSL2 via HTTP) | torch.compile CUDA; voice cloning; use_memory_cache=on; warmup() at startup |
+| Audio | `sounddevice` | 16kHz capture; 44100Hz playback |
 
-Each service is a standalone module in `backend/services/`; no service imports another (pipeline.py orchestrates).
-`audio_capture.py` owns VAD + buffering. `pipeline.py` owns `SentenceBuffer` + orchestration.
+Each service is a standalone module in `backend/services/` — no service imports another.
+`pipeline.py` is the sole orchestrator.
+
+---
+
+## Pipeline Data Flow
+
+```
+utterance bytes
+  → stt.transcribe()           → TranscribeResult (text, language, confidence)
+  → intent_classifier.classify() → intent string
+  → filler.stream_filler()     → WAV bytes yielded immediately (from memory)
+  → llm_client.generate_stream() → token stream
+  → SentenceBuffer.feed()      → sentence strings (boundary: . ? ! , ، ؟, min 8 chars)
+  → tts.synthesize_stream()    → WAV bytes yielded per sentence
+```
+
+---
+
+## Filler Audio Rules
+
+- Always yield filler FIRST (before any TTS) — pipeline.py handles this
+- Filler selection: `intent_classifier.classify(transcript)` → `filler.stream_filler(intent, language)`
+- Falls back to `general` intent if intent-specific clips missing
+- 6 variants per intent per language (3 formal, 3 casual) — random selection each turn
+
+---
 
 ## Language / Bilingual Rules
 
-- Default language detection: auto (Whisper detects it)
-- System prompt must explicitly instruct: respond in the same language as the user
-- Arabic: support both MSA and Gulf/UAE dialect
-- Fallback: if language detection fails, default to English
+- Language detection: faster-whisper `detect_language()` → EN or AR (force one; reject if max prob < 0.30)
+- System prompt: two separate prompts (EN-only vs AR-only) — `prompt_builder.py`
+- Arabic: respond in the same dialect/register the user used
+- Fallback: if detection fails → "unknown" → pipeline skips (no empty LLM calls)
+
+---
+
+## Fish Speech (WSL2)
+
+- Runs in WSL2: `~/fish-speech-wsl/fish-speech/` with separate venv at `~/fish-speech-wsl/venv`
+- Start command: `python tools/api_server.py --llama-checkpoint-path checkpoints/fish-speech-1.5 --decoder-checkpoint-path checkpoints/fish-speech-1.5/firefly-gan-vq-fsq-8x1024-21hz-generator.pth --listen 0.0.0.0:8001 --device cuda --compile`
+- Windows accesses it at `http://172.29.211.12:8001` (WSL2 IP — check with `wsl hostname -I`)
+- **Do NOT install torch or fish-speech in the main Windows project venv**
+- `tts.warmup()` must be called at startup to pre-populate the VQGAN LRU cache (avoids 12s penalty on first real request)
+
+---
 
 ## API Patterns
 
-- REST verbs + resource paths: `POST /api/voice/transcribe`, `POST /api/voice/respond`, `GET /api/pipeline/status`
-- All request/response bodies validated with Pydantic
-- Errors: `HTTPException(status_code=..., detail=...)` — never `{"error": "..."} + 200`
-- Streaming response for TTS audio (chunked)
-- Structured log on every non-2xx
+- All endpoints are async
+- Streaming endpoints use `StreamingResponse` (FastAPI)
+- Errors: raise `HTTPException` with appropriate status code
+- Never block the event loop — use `asyncio.get_event_loop().run_in_executor` for sync calls
 
-## Testing
+---
 
-- **Backend:** `pytest` in `backend/tests/`. Mirror source: `services/stt.py` → `tests/services/test_stt.py`
-- **Frontend:** `vitest` adjacent to components
-- **Every new module:** golden-path test + one edge case minimum
-- **Pipeline integration test:** must test the full STT → LLM → TTS path with a fixture audio file
+## Dependency Rules
 
-## Commits
+| Package | Where |
+|---|---|
+| `faster-whisper`, `sounddevice`, `soundfile`, `numpy`, `scikit-learn`, `ormsgpack` | `requirements-windows.txt` only |
+| `llama-cpp-python` | `requirements-mac.txt` only |
+| `fastapi`, `uvicorn`, `pydantic`, `httpx`, `aiosqlite`, `python-dotenv`, `python-json-logger` | `requirements-shared.txt` |
+| `torch` | WSL2 venv only — never in project venv |
 
-- Conventional-commit: `feat:`, `fix:`, `refactor:`, `docs:`, `chore:`, `data:`, `model:`
-- One logical change per commit
-- Message explains *why*, not *what*
+---
 
-## Pre-Push Checklist
+## Development Rules
 
-Run `scripts/pre_push_check.sh` before every push. It verifies:
-1. `mypy backend/` — type checker passes
-2. `ruff check backend/` — linter clean
-3. `pytest backend/tests/` — all tests pass
-4. No secrets in diff (`git diff HEAD` scan)
-5. `CODE_STRUCTURE.md` is up to date (last modified within current session)
-6. `PROJECT.md` `Last Updated` date matches today
+**Rule 1 (B001):** Any standalone script using `insert_event` must call `await init_db()` first. Do not assume FastAPI lifespan has run.
 
-If any check fails: fix it, don't skip it.
+**Rule 2:** Never mark a bug resolved without a regression test.
 
-## Correction Loop (Bug Non-Recurrence Protocol)
-
-When a bug is found:
-1. **Log it immediately** in `INSTRUCTIONS.md` under `## Bug & Correction Log`
-2. Fix the bug
-3. **Update the log** with the root cause and fix
-4. **Add a regression test** that would have caught it
-5. **Add a rule** to this CONVENTIONS.md or INSTRUCTIONS.md to prevent recurrence
-
-A bug that happens twice is a process failure, not a code failure.
-
-## Project-Specific Conventions
-
-- Timezone: Asia/Dubai
-- Audio sample rate in: 16000 Hz (Whisper requirement)
-- Audio sample rate out: 22050 Hz (Fish Speech 1.5 default)
-- VAD silence threshold: 300ms before utterance is considered complete
-- Max LLM response: 150 tokens (latency constraint — enforced in prompt_builder)
-- Language detection confidence threshold: 0.7 (below → ask user to repeat)
-- Model calls never on main thread — use `asyncio.run_in_executor` for blocking calls
-- Primary latency metric: **pipeline_ttfa_ms** (time from utterance end to first audio chunk)
-- All latency events written to `data/metrics.db` via `@track_latency` decorator
-- `PERFORMANCE.md` is auto-generated — never edit manually
-- `pipeline_phase` values: `raw` | `prompted` | `lora_v1` | `lora_v2` | `jais_fallback`
+**Rule 3:** Before any push — `venv\Scripts\python -m pytest backend/tests/ -q` must be green.

@@ -1,329 +1,237 @@
 # INSTRUCTIONS — Hands-Free: Bilingual Voice-to-Voice AI
 
-> **For Claude Code:** Read this file at the start of every session.
-> This document is the master build guide + living correction log.
-> When a bug is found: log it here immediately, even before fixing it.
+> Master setup guide + living correction log.
+> Read this at the start of every session.
+> When a bug is found: log it immediately, even before fixing it.
+>
+> Last Updated: 2026-05-08
 
 ---
 
-## ⚠️ Mandatory Pre-Work Rule
+## Architecture
 
-Before installing, downloading, or using ANY model, library, API, or framework:
-
-1. **Search the internet for the latest version and release notes**
-2. **Check hardware compatibility** (Mac Mini, Apple Silicon, Metal)
-3. **Check for breaking changes** since the last time you used it
-
-This is not optional. AI tooling changes weekly. Outdated integration = wasted hours.
-
----
-
-## Locked Stack (Final — Do Not Change Without PROJECT.md Change Log Entry)
-
-| Layer | Technology | Notes |
-|---|---|---|
-| STT | faster-whisper | Silero VAD built-in; utterance-triggered, not streaming mid-sentence |
-| LLM | Ollama → gemma4:e2b | Metal/MLX; OpenAI SDK stream=True; `ollama pull gemma4:e2b` |
-| TTS | Fish Speech 1.5 | HTTP chunked streaming; DAC decoder only (no voice cloning codec) |
-| Pipelining | Sentence-level | Each complete sentence from LLM → TTS immediately; don't wait for full response |
-| Audio I/O | sounddevice | Capture 16kHz mono; playback on first TTS chunk |
-| VAD | Silero (via faster-whisper) | 300ms silence → utterance complete → trigger STT |
-| Backend | FastAPI | Async; SSE streaming endpoint; thread pool for blocking calls |
-| Logging | Structured JSON + SQLite | Every stage timed; TTFA is primary metric |
-| Benchmark | scripts/benchmark.py | Auto-regenerates PERFORMANCE.md |
-| Distillation TTS | F5-TTS + F5-TTS-Arabic | Phase 4+ only; better prosody via voice cloning |
-
-**Target TTFA (time-to-first-audio after you stop speaking): < 800ms**
-
----
-
-## ⚠️ Pre-Push Gate (Non-Negotiable)
-
-Run `scripts/pre_push_check.sh` before EVERY push. Do not bypass with `--no-verify`.
-
-The script checks:
 ```
-[ ] mypy backend/        — type checker passes
-[ ] ruff check backend/  — linter clean
-[ ] pytest backend/tests/ — all tests pass
-[ ] No secrets in diff
-[ ] CODE_STRUCTURE.md updated this session
-[ ] PROJECT.md Last Updated = today
+Windows (RTX A3000, CUDA)              Mac Mini (M4, Metal)
+─────────────────────────              ────────────────────
+sounddevice (mic in)                   llm_server.py
+→ TEN VAD                              → llama.cpp Metal
+→ stt.py (faster-whisper CUDA)         → JAIS-2 8B Q4
+→ intent_classifier.py                 → streaming NDJSON
+→ filler.py (from memory) ─────────────────────────────────┐
+→ llm_client.py ──────────→ HTTP RPC ──────────────────────┤
+→ pipeline.py / SentenceBuffer                             │
+→ tts.py → Fish Speech (WSL2 CUDA)                        │
+→ sounddevice (speaker out) ◄──────────────────────────────┘
+
+Fish Speech lives in WSL2 (Linux, torch.compile CUDA enabled).
+Windows accesses it at http://172.29.211.12:8001.
 ```
 
-If any check fails: **fix it**. Do not push a failing state.
+---
+
+## Quick Start
+
+### Windows (client)
+
+```powershell
+# 1. Clone and enter
+git clone <repo> && cd Hands-Free
+
+# 2. Python 3.11 venv
+py -3.11 -m venv venv
+venv\Scripts\activate
+
+# 3. Install
+pip install -r requirements-shared.txt -r requirements-windows.txt
+
+# 4. Configure
+copy .env.example .env
+# Edit .env: set HF_MACHINE_ROLE=client, HF_LLM_SERVICE_URL=http://<mac-ip>:8080
+
+# 5. Start Fish Speech in WSL2 (separate terminal)
+wsl
+cd ~/fish-speech-wsl/fish-speech
+source ~/fish-speech-wsl/venv/bin/activate
+python tools/api_server.py \
+  --llama-checkpoint-path checkpoints/fish-speech-1.5 \
+  --decoder-checkpoint-path checkpoints/fish-speech-1.5/firefly-gan-vq-fsq-8x1024-21hz-generator.pth \
+  --listen 0.0.0.0:8001 --device cuda --compile
+
+# 6. Run
+python scripts/start.py
+```
+
+### Mac Mini (server)
+
+```bash
+# 1. Clone and enter
+git clone <repo> && cd Hands-Free
+
+# 2. Python 3.11
+brew install python@3.11
+python3.11 -m venv venv && source venv/bin/activate
+
+# 3. Install
+pip install -r requirements-shared.txt
+CMAKE_ARGS="-DGGML_METAL=on" pip install llama-cpp-python --no-cache-dir
+
+# 4. Download model
+mkdir -p ~/models
+# Download JAIS-2 8B Q4 GGUF from HuggingFace → ~/models/jais-2-8b-q4.gguf
+# Check: https://huggingface.co/core42 for latest JAIS GGUF
+# Fallback: Qwen2.5-7B-Instruct-Q4_K_M.gguf (strong Arabic support, widely available)
+
+# 5. Configure
+cp .env.example .env
+# Edit .env:
+# HF_MACHINE_ROLE=server
+# HF_LLM_MODEL_PATH=/Users/naman/models/jais-2-8b-q4.gguf
+# HF_LLM_MODEL_NAME=jais-2-8b-q4
+# HF_LLM_PORT=8080
+# HF_LLM_N_GPU_LAYERS=99
+# HF_LLM_N_CTX=2048
+
+# 6. Run
+python scripts/start_llm_server.py
+
+# 7. Verify from Windows
+curl http://<mac-ip>:8080/healthz
+```
+
+---
+
+## Fish Speech WSL2 Setup (one-time)
+
+```bash
+# In WSL2 terminal
+sudo apt update && sudo apt install -y python3.11 python3.11-venv portaudio19-dev ffmpeg
+
+mkdir -p ~/fish-speech-wsl && cd ~/fish-speech-wsl
+git clone https://github.com/fishaudio/fish-speech fish-speech
+cd fish-speech && git checkout v1.5.1
+
+python3.11 -m venv ~/fish-speech-wsl/venv
+source ~/fish-speech-wsl/venv/bin/activate
+
+pip install torch==2.5.1 torchaudio==2.5.1 \
+  --index-url https://download.pytorch.org/whl/cu128
+pip install -e ".[stable]"
+
+# Download checkpoints
+huggingface-cli download fishaudio/fish-speech-1.5 --local-dir checkpoints/fish-speech-1.5
+
+# Test
+python tools/api_server.py \
+  --llama-checkpoint-path checkpoints/fish-speech-1.5 \
+  --decoder-checkpoint-path checkpoints/fish-speech-1.5/firefly-gan-vq-fsq-8x1024-21hz-generator.pth \
+  --listen 0.0.0.0:8001 --device cuda --compile
+```
+
+### WSL2 IP
+Fish Speech binds to `0.0.0.0:8001` in WSL2. Find the IP:
+```bash
+wsl hostname -I   # e.g. 172.29.211.12
+```
+Set `HF_FISH_SPEECH_URL=http://172.29.211.12:8001` in `.env`.
+
+---
+
+## Regenerating Assets (one-time scripts)
+
+```powershell
+# Generate reference voice WAVs via Edge TTS (only if voices/ is missing)
+venv\Scripts\python scripts/generate_reference_voices.py
+
+# Generate all 84 filler WAVs (Fish Speech must be running)
+venv\Scripts\python scripts/generate_fillers.py
+
+# Benchmark TTS
+venv\Scripts\python scripts/prosody_bench.py
+```
+
+---
+
+## Running Tests
+
+```powershell
+venv\Scripts\python -m pytest backend/tests/ -q
+# Expected: 35 passed
+```
 
 ---
 
 ## Phase Overview
 
 ```
-Phase 1 → Base Pipeline (STT + LLM + TTS)
-Phase 2 → Behavior Control (prompts)
-Phase 3 → Dataset Creation
-Phase 4 → LoRA Fine-Tuning (distillation)
-Phase 5 → Evaluation + Iteration
-Phase 6 → Optional enhancements (RAG, voice cloning, streaming)
+Phase 1 → Windows Pipeline (COMPLETE)
+Phase 2 → Mac Mini LLM Setup (IN PROGRESS)
+Phase 3 → Behavior Control (prompts, DEWA vocab)
+Phase 4 → Dataset Creation (DEWA domain)
+Phase 5 → LoRA Fine-Tuning
+Phase 6 → Evaluation + Iteration
 ```
-
-Fallback: If Gemma Arabic quality is insufficient → switch to **Jais** (Arabic-first model).
 
 ---
 
-## Phase 1: Base Pipeline
+## Latency Targets
 
-### Streaming Architecture (5 Concurrent Layers)
-
-```
-Layer 1  sounddevice → 512ms PCM chunks → audio_queue
-Layer 2  Silero VAD → detects utterance end (300ms silence) → stt_queue
-Layer 3  faster-whisper.transcribe(utterance) → (text, language) → llm_queue   [~150-300ms]
-Layer 4  Ollama stream=True → SentenceBuffer → emits complete sentences → tts_queue [TTFT ~200ms]
-Layer 5  Fish Speech HTTP stream → audio chunks → sounddevice plays first chunk  [TTFA ~300ms]
-```
-
-### Task Sequence
-
-1. Create Python venv + requirements.txt + .env.example
-2. `ollama pull gemma4:e2b` — verify Ollama serves it
-3. `backend/logging_config.py` — structured JSON
-4. `backend/database.py` — SQLite schema (latency_events)
-5. `backend/monitoring/latency_tracker.py` — `@track_latency` decorator
-6. `backend/services/stt.py` — utterance bytes → TranscribeResult
-7. `backend/services/llm.py` — generate() + generate_stream()
-8. `backend/services/tts.py` — Fish Speech synthesize() + synthesize_stream()
-9. `backend/services/prompt_builder.py` — bilingual system prompt
-10. `backend/services/audio_capture.py` — VAD + mic buffering → utterances()
-11. `backend/services/pipeline.py` — SentenceBuffer + run() + run_realtime()
-12. `backend/api/voice.py` + `health.py` + `backend/app.py`
-13. `fixtures/audio/` — 4 WAV files (en/ar × greeting/hr_query)
-14. `scripts/benchmark.py` + `scripts/generate_report.py` → first `PERFORMANCE.md`
-15. `DISTILLATION.md`
-
-### Latency Targets
-
-| Stage | Target | Metric |
-|---|---|---|
-| STT | < 300ms | duration_ms |
-| LLM time-to-first-token | < 300ms | ttft_ms |
-| TTS time-to-first-audio | < 400ms | ttfa_ms |
-| **Pipeline TTFA** | **< 800ms** | **pipeline_ttfa_ms** |
-| Total round-trip | < 2000ms | total_ms |
-
-### Audio Spec
-
-- Input: 16000 Hz, mono, 16-bit PCM (Whisper native)
-- Output: 22050 Hz (Fish Speech 1.5 default), playback via sounddevice
-- VAD silence threshold: 300ms (tune if needed)
-
----
-
-## Phase 2: Behavior Control
-
-### System Prompt Template
-
-```
-You are a helpful bilingual voice assistant. Respond ONLY in the language the user speaks.
-If the user speaks Arabic, respond in Arabic. If English, respond in English.
-Keep responses short and conversational — maximum 2–3 sentences.
-Do not explain what you are doing. Just answer.
-```
-
-### Bilingual Rules
-
-- Language detection confidence threshold: 0.7
-- If confidence < 0.7: ask user to repeat
-- Never mix languages in a single response
-- Gulf/UAE Arabic dialect preferred when responding in Arabic
-
----
-
-## Phase 3: Dataset Creation
-
-### Format
-
-```json
-{
-  "instruction": "Task description for the assistant",
-  "input": "User query (Arabic or English)",
-  "output": "Ideal assistant response"
-}
-```
-
-### Dataset Targets
-
-| Stage | Size |
+| Stage | Target |
 |---|---|
-| POC | 500–1,000 samples |
-| Production | 3,000–10,000 samples |
-
-### Quality Rules
-
-- Max response length: 3 sentences
-- Must include follow-up questions where appropriate
-- Must include refusal/guardrail cases
-- Remove robotic phrasing
-- Remove inconsistent tone
-
-### Teacher Model
-
-Use OpenAI API for generating ideal responses. This is a one-time cost, not runtime.
-Store API key in `.env` as `HF_OPENAI_API_KEY`. Never commit to git.
+| STT | < 300ms |
+| LLM TTFT | < 100ms |
+| TTS first chunk | < 500ms (improving) |
+| **Pipeline TTFA (real)** | **< 600ms** |
+| **Pipeline TTFA (perceived)** | **~0ms** (filler hides it) |
 
 ---
 
-## Phase 4: LoRA Fine-Tuning
+## Stack Versions (Last checked: 2026-05-08)
 
-### Config Constraints
-
-- Max 1–2 epochs (avoid overfit)
-- QLoRA (4-bit quantization) for Mac memory constraints
-- Target modules: `q_proj`, `v_proj`
-- Rank: 8–16
-- Learning rate: 2e-4
-
-### Output
-
-- LoRA adapters: `models/lora/hands-free-v1/`
-- Merged + quantized: rebuild as GGUF for inference
-
----
-
-## Phase 5: Evaluation Loop
-
-### Failure Capture Protocol
-
-1. Run real conversations, note failures
-2. For each failure: log in "Bug & Correction Log" below
-3. Generate correct response using teacher model
-4. Add to dataset
-5. Retrain (1 epoch, validate loss improvement)
-6. Retest the specific failure case
-
----
-
-## Phase 6: Optional Enhancements
-
-- RAG: inject knowledge base at inference time (LlamaIndex or Haystack — check latest)
-- Voice cloning: Fish Speech supports it — evaluate after Phase 1
-- Dialect handling: add Gulf dialect examples to dataset in Phase 3
-- Streaming: FastAPI StreamingResponse for TTS chunks
-
----
-
-## Fallback Strategy
-
-If Gemma Arabic quality is insufficient after Phase 2:
-
-**Switch to Jais**
-- Arabic-first training, strong Gulf dialect understanding
-- Download from HuggingFace: search for latest Jais release before downloading
-- Drop-in replacement for `backend/services/llm.py`
-
-Trigger conditions for fallback:
-- Arabic comprehension accuracy < 70% on test set
-- Consistent bilingual mixing in responses
-- Weak contextual handling in Arabic
-
----
-
-## Stack Versions (Check Before Use)
-
-> Last checked: 2026-04-24. Always reverify before installing.
-
-| Library | Purpose | Source to check |
+| Library | Purpose | Notes |
 |---|---|---|
-| faster-whisper | STT + Silero VAD | GitHub: SYSTRAN/faster-whisper |
-| ollama (Python) | LLM client | PyPI: ollama |
-| openai | LLM streaming client | PyPI: openai (used against Ollama base_url) |
-| fish-speech | TTS | GitHub: fishaudio/fish-speech |
-| sounddevice | Audio I/O | PyPI: sounddevice |
-| FastAPI | Backend | PyPI: fastapi |
-| pydantic | Validation | PyPI: pydantic |
-| torch | Training (Phase 4) | pytorch.org — check Metal/MPS support version |
-| transformers | Training (Phase 4) | Hugging Face — check latest |
-| peft | LoRA (Phase 4) | Hugging Face: peft |
-
-**Fish Speech note:** Uses DAC (Descript Audio Codec) internally — bundled, no separate install.
-For TTS without voice cloning: only decoder runs (tokens → audio). Encoder (cloning) is Phase 6.
-Fish Speech requires CUDA for real-time on production. On Mac Mini with MPS: ~15-25s/sentence.
-POC accepts this latency — PERFORMANCE.md will show real numbers. Azure deploy = real-time.
-
----
-
-## Bug & Correction Log
-
-> **Protocol:** When a bug is discovered, add a row immediately (before fixing).
-> Update with resolution after fixing. Add a regression test. Add a prevention rule.
-> **A bug that recurs is a process failure.**
-
-| ID | Date | Phase | Description | Root Cause | Fix | Regression Test | Prevention Rule | Status |
-|---|---|---|---|---|---|---|---|---|
-| B001 | 2026-04-24 | 1 | `latency_events` table not found when benchmark.py runs standalone | `init_db()` is only called via FastAPI lifespan; benchmark.py skips that path | Call `await init_db()` at the top of `run_benchmark()` in benchmark.py | `test_benchmark_inits_db` (added) | Never call `insert_event` before `init_db()` is awaited; scripts that bypass FastAPI must call it explicitly | [Resolved] |
-
-### Bug Log Instructions (for Claude Code)
-
-When you find a bug:
-1. **Immediately** add a row with ID, date, phase, description — leave root cause/fix blank
-2. Investigate and fix
-3. Update root cause and fix columns
-4. Write a test that would have caught it
-5. Add a prevention rule to `CONVENTIONS.md` or this section
-6. Mark status `[Resolved]`
-
-Never mark a bug resolved without a regression test.
-Never close this log — historical record is permanent.
+| `faster-whisper` | STT | `large-v3-turbo` model; check SYSTRAN/faster-whisper for updates |
+| `fish-speech` v1.5.1 | TTS | WSL2 only; pinned at v1.5.1 tag |
+| `llama-cpp-python` | LLM (Mac) | Build with Metal: `CMAKE_ARGS="-DGGML_METAL=on"` |
+| `sounddevice` | Audio I/O | Windows native; no driver install needed |
+| `ten-vad` | VAD | `pip install ten-vad`; better than Silero for turn-taking |
+| `scikit-learn` | Intent classifier | TF-IDF vectorizer |
+| `ormsgpack` | Fish Speech VQGAN | Used only in `tts.warmup()` |
 
 ---
 
 ## LLM Prosody Instructions for Fish Speech
 
-The system prompt must teach Gemma to write text that Fish Speech renders naturally.
+Embed these tags in LLM responses for natural TTS delivery:
 
-**Fish Speech inline tags (embed in response text):**
 ```
-[laugh]      — natural laugh at that position
+[laugh]      — natural laugh
 [whisper]    — lower to whisper
 [emphasis]   — stress the following word
-[sigh]       — audible sigh before sentence
-[excited]    — high energy delivery
-[angry]      — assertive/urgent tone
+[sigh]       — audible sigh
+[excited]    — high energy
 ```
 
-**Punctuation as prosody:**
-```
-,     — short breath pause
-...   — thinking pause (longer)
-—     — abrupt mid-thought cut
-?     — rising intonation
-!     — energy increase
-،     — Arabic comma pause
-؟     — Arabic question mark (rising)
-```
+Punctuation as prosody: `,` breath pause, `...` thinking pause, `?` rising intonation.
 
-**System prompt addition (append to all prompts):**
-```
-Format responses for natural spoken delivery via text-to-speech.
-Use [laugh], [emphasis], or [sigh] where a real speaker would naturally use them.
-Use commas for breath pauses and ... for a thinking pause.
-Keep responses to 1-2 sentences maximum. Never write lists or bullet points.
-Use contractions (it's, you're, that's) — never formal full forms in speech.
-Never start with "Certainly", "Of course", or "Great question".
-Respond in the exact same language the user spoke.
-```
+System prompts already include Fish Speech prosody rules — see `prompt_builder.py`.
 
 ---
 
-## Development Rules (Derived from Corrections)
+## Bug & Correction Log
 
-> This section grows as bugs are resolved. Each rule here prevented at least one real bug.
-
-**Rule 1 (from B001):** Any script or CLI tool that uses `insert_event` must call `await init_db()` explicitly before its first database write. Do not assume FastAPI lifespan has run. Add `await init_db()` as the first line of any standalone async `main()` function.
+| ID | Date | Phase | Description | Root Cause | Fix | Regression Test | Status |
+|---|---|---|---|---|---|---|---|
+| B001 | 2026-04-24 | 1 | `latency_events` table not found in standalone scripts | `init_db()` not called outside FastAPI lifespan | Call `await init_db()` in standalone async `main()` | `test_benchmark_inits_db` | [Resolved] |
+| B002 | 2026-05-08 | 1 | `scripts/start.py` imported `FillerPlayer` class which no longer exists | `filler.py` was refactored to `stream_filler()` generator; `start.py` not updated | Removed `FillerPlayer` import; pipeline handles fillers internally | Covered by pipeline tests | [Resolved] |
 
 ---
 
-## Architecture Reference
+## Development Rules
 
-See `CODE_STRUCTURE.md` for the always-current file map.
-See `PROJECT.md` for decisions, risks, and status.
-See `CONVENTIONS.md` for naming, size caps, and commit rules.
+**Rule 1 (B001):** Any standalone script using `insert_event` must call `await init_db()` before first DB write.
+
+**Rule 2 (B002):** When refactoring a service interface, grep for all callers before committing.
+
+**Rule 3:** Never mark a bug resolved without a regression test.
+
+**Rule 4:** `pytest backend/tests/ -q` must be green before every push.

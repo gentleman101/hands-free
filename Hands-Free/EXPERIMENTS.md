@@ -3,6 +3,12 @@
 > Tracks every deliberate tuning change: what changed, why, the original value, and how to revert.
 > Fill in the **Result** section after testing each experiment.
 > Status: `Active` | `Reverted` | `Superseded`
+>
+> Last Updated: 2026-05-08
+>
+> **Architecture note (2026-05-08):** Project moved from Mac-only to distributed Windows+Mac.
+> EXP-003, EXP-004 (MPS), EXP-014 (Apple say), EXP-015 (mlx-whisper) are Superseded — those
+> optimizations applied to the Mac-based design. Windows uses CUDA throughout.
 
 ---
 
@@ -542,3 +548,136 @@ Restore single `_SYSTEM_PROMPT` string. Change `build_messages()` to use it unco
 - If you need voice cloning by Phase 6 → SILMA's zero-shot cloning is attractive
 
 **HuggingFace link for testing:** https://huggingface.co/silma-ai/SILMA-v1
+
+---
+
+## EXP-018 — Fish Speech moved from Windows to WSL2 (torch.compile)
+Date: 2026-05-05
+Status: Active
+
+### Change
+Before: Fish Speech ran as a Windows process (Python 3.11, venv-fish on C:\). No torch.compile.
+
+After: Fish Speech runs in WSL2 Ubuntu (Python 3.11, `~/fish-speech-wsl/venv`). Started with `--compile`.
+
+### Rationale
+`torch.compile` requires Triton, which is Linux-only. On Windows, Fish Speech was limited to ~10 tok/sec regardless of GPU. WSL2 provides a real Linux kernel, enabling Triton's Inductor backend.
+
+### Results
+| Mode | tok/sec | TTFA |
+|---|---|---|
+| Windows (no compile) | ~10 | ~13s |
+| WSL2 + torch.compile | ~65 | ~2.1s |
+
+✅ **5× speedup confirmed.** First compile takes ~2 min, then cached.
+
+### Revert
+Set `HF_FISH_SPEECH_URL` to a Windows-hosted Fish Speech instance. Requires separate Windows venv-fish setup without `--compile`.
+
+---
+
+## EXP-019 — Real voice references for Fish Speech cloning
+Date: 2026-05-07
+Status: Active
+
+### Change
+File: `assets/voices/hamdan_ar.wav`, `assets/voices/brian_en.wav`
+
+Before:
+- `hamdan_ar.wav`: Edge TTS `ar-AE-HamdanNeural` (synthetic, caused distorted output)
+- `brian_en.wav`: Edge TTS `en-US-BrianNeural` (synthetic)
+
+After:
+- `hamdan_ar.wav`: Real Emirati Arabic news anchor voice, extracted from MP3 (7s offset, 15s clip, ffmpeg mono 44100Hz)
+- `brian_en.wav`: Real English voice from news MP3 (27s offset, 15s clip, ffmpeg mono 44100Hz)
+
+### Rationale
+Fish Speech voice cloning distorted when given synthetic TTS as reference. Real human voices produce more natural cloned output.
+
+### Results
+✅ Distortion resolved. Arabic output sounds natural and Emirati-accented.
+✅ English output matches reference voice character.
+
+### Revert
+`python scripts/generate_reference_voices.py` regenerates Edge TTS references.
+
+---
+
+## EXP-020 — TF-IDF intent classifier for filler selection
+Date: 2026-05-06
+Status: Active
+
+### Change
+File: `backend/services/intent_classifier.py` (new file)
+
+Before: No intent classification. All users heard the same generic filler ("One moment please").
+
+After: TF-IDF char n-gram classifier (scikit-learn). 7 intents: billing, location, outage, account, service_request, sustainability, general. Bilingual training data (EN+AR). Classifies transcript → intent → context-aware filler selected.
+
+### Rationale
+"One moment please" for every intent sounds robotic. "Let me pull up your bill" for a billing query is contextually appropriate and builds trust.
+
+### Results
+✅ 35/35 unit tests passing (10 intent classifier tests).
+✅ Inference: 0.46ms (negligible latency impact).
+✅ Bilingual: works for both Arabic and English transcripts.
+
+### Revert
+In `pipeline.py`, replace `classify(transcript.text)` with hardcoded `"general"`.
+
+---
+
+## EXP-021 — VQGAN warmup + use_memory_cache
+Date: 2026-05-08
+Status: Active
+
+### Change
+Files: `backend/services/tts.py`
+
+Before: Each TTS request re-encoded reference audio from scratch (~12s on cold Fish Speech server).
+
+After:
+1. `tts.warmup()` function calls `/v1/vqgan/encode` at startup for both EN+AR reference audio, populating Fish Speech's LRU cache.
+2. All TTS payloads include `"use_memory_cache": "on"`.
+
+### Rationale
+Fish Speech internally uses `cached_vqgan_batch_encode` (LRU cache keyed by audio bytes). First encode costs ~12s; subsequent calls hit cache at ~20ms. Pre-warming at startup removes the 12s penalty from the first real user request.
+
+### Results
+| Call | Encode time |
+|---|---|
+| Cold (first after server restart) | ~12,156ms |
+| Warm (LRU cache hit) | ~20ms |
+
+✅ **600× speedup on VQGAN encode after warmup.**
+`app.py` lifespan calls `tts.warmup()` at startup.
+
+### Revert
+Remove `warmup()` call from `app.py` lifespan. Remove `"use_memory_cache": "on"` from payload in `synthesize_stream()`.
+
+---
+
+## EXP-022 — 84 intent-aware filler WAVs (6 variants × 7 intents × 2 languages)
+Date: 2026-05-08
+Status: Active
+
+### Change
+Files: `assets/fillers/en/`, `assets/fillers/ar/`, `backend/services/filler.py`
+
+Before: 5 generic fillers per language (e.g., "One moment please.", "Let me check that."). No intent context. FillerPlayer used background task + play_fn injection.
+
+After:
+- 84 WAVs: 7 intents × 2 languages × 6 variants (3 formal + 3 casual)
+- Casual variants: "Umm, one sec.", "Ohh okay, let me check.", "Absolutely, just a moment."
+- `filler.py` refactored to `stream_filler()` async generator — same interface as `tts.synthesize_stream`
+- Pipeline yields filler bytes FIRST (instant from memory), then real TTS bytes
+- No background task needed; single audio stream
+
+### Results
+✅ 84 WAVs generated, all playing correctly with cloned voice.
+✅ Filler selection is context-aware: billing query → "Let me pull up your bill."
+✅ Casual variants make the assistant feel more natural and human.
+✅ No background task complexity — cleaner pipeline code.
+
+### Revert
+Change `_VARIANTS = 6` back to `_VARIANTS = 3` in `filler.py`. Delete `assets/fillers/{en,ar}/*_4.wav` through `*_6.wav`.

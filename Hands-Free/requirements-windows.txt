@@ -1,21 +1,28 @@
-# Windows (client) dependencies — installed alongside requirements-shared.txt
-# Hardware: RTX A3000 4GB CUDA + 32GB RAM, Windows 11
+# Windows (client) dependencies — install alongside requirements-shared.txt
+# Hardware: RTX A3000 6GB VRAM, i7-11850H, 32GB RAM, Windows 11
 
-# STT — faster-whisper with CUDA backend
-# CTranslate2 auto-detects CUDA; install CUDA 12 + cuDNN 9 separately
+# STT — faster-whisper large-v3-turbo on CUDA
+# Requires CUDA 12 + cuDNN 9 installed separately (pytorch.org)
 faster-whisper>=1.1.0
-
-# TTS — Fish Speech (install separately; runs as sidecar on port 8001)
-# pip install fish-speech  OR clone https://github.com/fishaudio/fish-speech
-# Note: requires torch with CUDA
-
-# VAD — TEN VAD (better than Silero for voice agent turn-taking)
-# https://github.com/TEN-framework/ten-vad
-# pip install ten-vad
 
 # Audio I/O
 sounddevice>=0.5.1
 soundfile>=0.13.0
 
-# Companion display UI (optional)
-gradio>=4.0.0
+# Audio processing + intent classifier
+numpy>=2.2.0
+scikit-learn>=1.6.0
+
+# Fish Speech VQGAN codec warmup (tts.py warmup())
+ormsgpack>=0.5.0
+
+# VAD — TEN VAD (better turn-taking than Silero; install separately)
+# pip install ten-vad
+# https://github.com/TEN-framework/ten-vad
+
+# Reference voice generation — one-time use only
+# pip install edge-tts
+
+# NOTE: Fish Speech runs in WSL2 with its own isolated venv.
+# Do NOT install torch or fish-speech in this venv.
+# WSL2 setup: ~/fish-speech-wsl/venv (torch+cuda128 inside WSL2)

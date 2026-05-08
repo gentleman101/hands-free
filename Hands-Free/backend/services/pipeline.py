@@ -1,14 +1,17 @@
 """
-Pipeline orchestrator: STT → LLM (remote) → SentenceBuffer → TTS, with filler audio.
+Pipeline orchestrator: STT → intent → filler → LLM → SentenceBuffer → TTS.
+
+Flow per turn:
+  1. STT transcribes utterance
+  2. Intent classifier picks filler variant
+  3. Filler WAV bytes yielded immediately (from memory, ~instant) — user hears
+     something natural while LLM + TTS work in parallel
+  4. LLM streams tokens → SentenceBuffer emits sentences → TTS synthesizes
+  5. Real TTS audio chunks yielded
 
 Apple-branch carry-overs:
-- EXP-005: SentenceBuffer with _MIN_SENTENCE_CHARS=8 + comma boundary →
-  ships first clause to TTS earlier (saves 200-500ms TTFA)
-- pipeline_ttfa_ms is the PRIMARY METRIC
-
-New for distributed setup:
-- LLM is called via llm_client.py (HTTP RPC to Mac)
-- Filler audio plays during LLM wait, cancelled on first TTS chunk
+- EXP-005: SentenceBuffer min_chars=8 + comma boundary → 200-500ms TTFA gain
+- pipeline_ttfa_ms is the PRIMARY METRIC (filler hides it perceptually)
 """
 from __future__ import annotations
 
@@ -23,14 +26,13 @@ from typing import AsyncIterator
 from backend.database import fire_and_forget, insert_event
 from backend.services import llm_client, prompt_builder
 from backend.services import tts as tts_svc
-from backend.services.filler import FillerPlayer
+from backend.services.filler import stream_filler
+from backend.services.intent_classifier import classify
 
 log = logging.getLogger(__name__)
 
 
-# EXP-005: comma included so first clause ships to TTS earlier.
-# Min chars 8 (was 15) — Fish Speech first-chunk latency dominates pipeline TTFA,
-# so shorter first emit-to-TTS = faster pipeline_ttfa.
+# EXP-005: comma boundary + min_chars=8 ships first clause to TTS earlier.
 _BOUNDARIES = frozenset(".?!\n،؟！,")
 _MIN_SENTENCE_CHARS = 8
 
@@ -50,6 +52,7 @@ class PipelineLatency:
 class PipelineResult:
     transcription: str = ""
     language: str = ""
+    intent: str = ""
     response_text: str = ""
     latency: PipelineLatency = field(default_factory=PipelineLatency)
 
@@ -58,15 +61,14 @@ class PipelineResult:
 class SentenceBuffer:
     """
     Accumulate LLM token stream and emit complete sentences.
-    Emits on a boundary char after _MIN_SENTENCE_CHARS.
-    Call flush() to drain remaining buffered text at end of stream.
+    Emits on a boundary char after _MIN_SENTENCE_CHARS accumulated.
+    Call flush() to drain remaining text at end of stream.
     """
 
     def __init__(self) -> None:
         self._buf = ""
 
     def feed(self, token: str) -> str | None:
-        """Add a token. Return a complete sentence if a boundary is detected, else None."""
         self._buf += token
         if len(self._buf) < _MIN_SENTENCE_CHARS:
             return None
@@ -74,12 +76,10 @@ class SentenceBuffer:
             if ch in _BOUNDARIES:
                 sentence = self._buf[: i + 1].strip()
                 self._buf = self._buf[i + 1 :]
-                if sentence:
-                    return sentence
+                return sentence if sentence else None
         return None
 
     def flush(self) -> str | None:
-        """Return any remaining buffered text (end-of-stream)."""
         remaining = self._buf.strip()
         self._buf = ""
         return remaining if remaining else None
@@ -91,27 +91,20 @@ async def run_realtime(
     *,
     request_id: str | None = None,
     conversation_history: list[dict[str, str]] | None = None,
-    filler: FillerPlayer | None = None,
     out: PipelineResult | None = None,
 ) -> AsyncIterator[bytes]:
     """
-    Run a full realtime pipeline turn:
-      audio bytes → STT → LLM stream (remote) → SentenceBuffer → TTS stream → audio bytes.
+    Run a full realtime pipeline turn. Yields audio bytes.
 
-    Yields TTS audio chunks as Fish Speech generates them. First audio chunk
-    arrives as soon as the first sentence is synthesized.
-
-    If `filler` is provided, plays a filler clip during the LLM wait and
-    cancels it the moment the first real TTS audio chunk is available.
-
-    Populates `out` (if given) with transcription, language, and final response.
+    First yields filler WAV bytes (from memory, near-instant) so the caller
+    can begin playback immediately. Then yields real TTS audio as it streams.
     """
     from backend.services import stt as stt_svc  # lazy: avoids soundfile at import time
 
     rid = request_id or str(uuid.uuid4())
     t_pipeline_start = time.perf_counter()
 
-    # 1. STT
+    # ── 1. STT ───────────────────────────────────────────────────────────────
     transcript = await stt_svc.transcribe(utterance_bytes, request_id=rid)
     if out is not None:
         out.transcription = transcript.text
@@ -122,11 +115,17 @@ async def run_realtime(
         log.debug("empty transcription — skipping pipeline", extra={"request_id": rid})
         return
 
-    # 2. Start filler audio (covers LLM latency)
-    if filler is not None and filler.has_fillers(transcript.language):
-        await filler.start(transcript.language)
+    # ── 2. Intent classification ──────────────────────────────────────────────
+    intent = classify(transcript.text)
+    if out is not None:
+        out.intent = intent
+    log.debug("intent", extra={"intent": intent, "request_id": rid})
 
-    # 3. Build prompt + stream LLM tokens (remote on Mac)
+    # ── 3. Filler — yield immediately from memory ────────────────────────────
+    async for filler_chunk in stream_filler(intent, transcript.language):
+        yield filler_chunk
+
+    # ── 4. LLM stream ────────────────────────────────────────────────────────
     messages = prompt_builder.build_messages(
         transcript.text,
         language=transcript.language,
@@ -136,7 +135,6 @@ async def run_realtime(
     buf = SentenceBuffer()
     response_chunks: list[str] = []
     pipeline_ttfa_recorded = False
-    first_tts_started = False
 
     t_llm = time.perf_counter()
     llm_first = True
@@ -154,16 +152,10 @@ async def run_realtime(
         if sentence is None:
             continue
 
-        # First complete sentence → start TTS streaming
+        # ── 5. TTS per sentence ───────────────────────────────────────────────
         async for audio_chunk in tts_svc.synthesize_stream(
             sentence, transcript.language, request_id=rid
         ):
-            # On the very first audio chunk, stop the filler and record pipeline_ttfa
-            if not first_tts_started:
-                first_tts_started = True
-                if filler is not None:
-                    await filler.stop()
-
             if not pipeline_ttfa_recorded:
                 pipeline_ttfa = int((time.perf_counter() - t_pipeline_start) * 1000)
                 pipeline_ttfa_recorded = True
@@ -172,10 +164,7 @@ async def run_realtime(
                     out.latency.llm_ttft_ms = llm_ttft_ms
                 log.info(
                     "pipeline ttfa",
-                    extra={
-                        "pipeline_ttfa_ms": pipeline_ttfa,
-                        "request_id": rid,
-                    },
+                    extra={"pipeline_ttfa_ms": pipeline_ttfa, "request_id": rid},
                 )
                 fire_and_forget(insert_event(
                     request_id=rid,
@@ -187,10 +176,9 @@ async def run_realtime(
                     pipeline_phase=os.environ.get("HF_PIPELINE_PHASE", "raw"),
                     success=True,
                 ))
-
             yield audio_chunk
 
-    # LLM stream done → flush buffer + synthesize tail
+    # ── 6. Flush tail ─────────────────────────────────────────────────────────
     llm_total_ms = int((time.perf_counter() - t_llm) * 1000)
     remaining = buf.flush()
     if remaining:
@@ -198,15 +186,7 @@ async def run_realtime(
         async for audio_chunk in tts_svc.synthesize_stream(
             remaining, transcript.language, request_id=rid
         ):
-            if not first_tts_started:
-                first_tts_started = True
-                if filler is not None:
-                    await filler.stop()
             yield audio_chunk
-
-    # If we never produced any TTS at all (empty LLM response), at least stop the filler
-    if not first_tts_started and filler is not None:
-        await filler.stop()
 
     if out is not None:
         out.response_text = "".join(response_chunks).strip()

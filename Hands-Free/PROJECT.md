@@ -15,9 +15,9 @@
 | **Sponsor / Owner** | Naman |
 | **Start Date** | 2026-04-24 |
 | **Planned End Date** | TBD |
-| **Status** | In Progress — Phase 1 complete |
-| **Last Updated** | 2026-04-27 (audio device routing added; Fish Speech 1.5 wired) |
-| **Repository** | /Users/naman/Documents/Hands-Free |
+| **Status** | In Progress — Windows pipeline complete; Mac setup pending |
+| **Last Updated** | 2026-05-08 (distributed architecture complete; Mac deployment pending) |
+| **Repository** | C:\Users\dewac\Documents\Naman\Hands-Free |
 
 ---
 
@@ -25,11 +25,12 @@
 
 | KPI | Current | Target |
 |---|---|---|
-| End-to-end voice latency | — | < 1 second (POC) |
+| TTS TTFA (Fish Speech, warmed) | ~1.8s | < 0.5s (target with STT+LLM) |
+| Pipeline TTFA (perceived) | ~0ms (filler hides it) | ~0ms |
+| Pipeline TTFA (real, no filler) | TBD — Mac not set up yet | < 600ms |
 | Bilingual accuracy (Arabic + English) | — | > 90% |
-| Pipeline phases complete | 1 / 6 | 6 / 6 |
+| Unit tests passing | 35 / 35 | 35 / 35 |
 | Dataset samples collected | 0 | 500 (POC) → 10,000 (full) |
-| Test coverage | ~85% (37 tests) | 80% |
 
 ---
 
@@ -81,8 +82,8 @@ Build a localized, bilingual (Arabic + English) voice-to-voice AI assistant that
 
 | Type | Statement |
 |---|---|
-| Assumption | Mac Mini is the primary hardware; GPU acceleration available via Metal |
-| Assumption | Gemma model at `/Users/naman/.saltpepper/models/gemma-4-E2B-it.litertlm` is functional |
+| Assumption | Windows (RTX A3000) handles STT + TTS; Mac Mini M4 handles LLM |
+| Assumption | JAIS-2 8B Q4 GGUF available from HuggingFace (core42 or community quantization) |
 | Constraint | No external API calls at inference time (privacy requirement) |
 | Constraint | Quantized / small models only (Mac hardware limitation) |
 | Constraint | Dataset generation for Phase 3 may use external API (OpenAI) — one-time, not at runtime |
@@ -125,17 +126,24 @@ Build a localized, bilingual (Arabic + English) voice-to-voice AI assistant that
 
 | WBS # | Work Package / Task | Description | Owner | Status |
 |---|---|---|---|---|
-| 1.0 | **Phase 1 — Base Pipeline** | End-to-end voice pipeline with raw models | Naman | [Complete] |
-| 1.1 | Environment setup | Python venv, requirements.txt, .env.example | Naman | [Complete] |
-| 1.2 | STT integration | faster-whisper: utterance bytes → TranscribeResult; @track_latency | Naman | [Complete] |
-| 1.3 | LLM integration | Ollama via OpenAI SDK; generate() + generate_stream() + TTFT tracking | Naman | [Complete] |
-| 1.4 | TTS integration | Fish Speech HTTP streaming; TTFA tracking; prosody tag support | Naman | [Complete] |
-| 1.5 | Pipeline orchestration | SentenceBuffer; run() + run_realtime(); PipelineLatency; 37 tests | Naman | [Complete] |
-| 1.6 | FastAPI backend + monitoring | REST endpoints; latency_tracker; database; benchmark + PERFORMANCE.md | Naman | [Complete] |
-| 2.0 | **Phase 2 — Behavior Control** | Prompt engineering for bilingual behavior + STT domain optimization | Naman | [Pending] |
-| 2.1 | System prompt design | Bilingual switching, short responses, domain restriction | Naman | [Pending] |
-| 2.2 | Behavior testing | Consistent language detection + response quality | Naman | [Pending] |
-| 2.3 | STT domain optimization | Add Whisper `initial_prompt` for DEWA vocabulary in AR + EN (roadmap) | Naman | [Pending] |
+| 1.0 | **Phase 1 — Windows Pipeline** | All Windows services: STT, TTS, audio, pipeline, fillers | Naman | [Complete] |
+| 1.1 | Environment + requirements | requirements-shared/windows/mac/dev; .env.example | Naman | [Complete] |
+| 1.2 | STT | faster-whisper large-v3-turbo CUDA; confidence gates; script validation | Naman | [Complete] |
+| 1.3 | TTS | Fish Speech 1.5 in WSL2; torch.compile; voice cloning; warmup() | Naman | [Complete] |
+| 1.4 | Audio capture | TEN VAD + Silero fallback; device priority; pre-roll buffering | Naman | [Complete] |
+| 1.5 | Pipeline | STT→intent→filler→LLM→SentenceBuffer→TTS; 35 tests | Naman | [Complete] |
+| 1.6 | Intent classifier + fillers | TF-IDF, 7 intents, bilingual; 84 filler WAVs; real Emirati+EN voices | Naman | [Complete] |
+| 1.7 | LLM client + server code | llm_client.py (Windows); llm_server.py (Mac, code-complete) | Naman | [Complete] |
+| 1.8 | FastAPI backend + monitoring | REST endpoints; latency_tracker; SQLite metrics | Naman | [Complete] |
+| 2.0 | **Phase 2 — Mac Mini Setup** | Deploy LLM server on Mac Mini; end-to-end test | Naman | [In Progress] |
+| 2.1 | Mac environment setup | Python 3.11, venv, requirements-shared + mac | Naman | [Pending] |
+| 2.2 | Model download | JAIS-2 8B Q4 GGUF → ~/models/ | Naman | [Pending] |
+| 2.3 | Deploy + smoke test | start_llm_server.py; curl /healthz from Windows | Naman | [Pending] |
+| 2.4 | End-to-end pipeline test | Live mic → STT → LLM → TTS → speaker | Naman | [Pending] |
+| 2.5 | Real latency benchmark | Measure pipeline_ttfa_ms with real services | Naman | [Pending] |
+| 3.0 | **Phase 3 — Behavior Control** | Prompt tuning; Whisper initial_prompt for DEWA vocab | Naman | [Pending] |
+| 3.1 | System prompt tuning | Bilingual switching, DEWA domain, short responses | Naman | [Pending] |
+| 3.2 | STT domain optimization | Whisper initial_prompt with DEWA vocabulary (AR + EN) | Naman | [Pending] |
 | 3.0 | **Phase 3 — Dataset Creation** | Build training dataset for distillation | Naman | [Pending] |
 | 3.1 | Define query scope | HR + task workflows + conversational patterns | Naman | [Pending] |
 | 3.2 | Generate inputs | English + Arabic variants, formal + dialect | Naman | [Pending] |
@@ -164,9 +172,10 @@ Build a localized, bilingual (Arabic + English) voice-to-voice AI assistant that
 | Date | Milestone | Description | Status |
 |---|---|---|---|
 | 2026-04-24 | Project Initiation | Scaffolding, docs, git setup | [Done] |
-| 2026-04-24 | Phase 1 Complete | Full pipeline codebase: 37 tests passing, benchmark running | [Done] |
-| TBD | Phase 1 Real-service test | Fish Speech running + Ollama serving gemma4:e2b + live audio test | [Future] |
-| TBD | Phase 2 Complete | Stable bilingual behavior | [Future] |
+| 2026-04-27 | Windows Pipeline Complete | All services + 35 tests passing | [Done] |
+| 2026-05-08 | Fish Speech WSL2 | torch.compile 5x speedup; voice cloning; 84 fillers; intent classifier | [Done] |
+| TBD | Mac Mini LLM Live | JAIS-2 8B running; end-to-end pipeline test | [Next] |
+| TBD | Phase 3 Complete | Stable bilingual behavior; DEWA vocab tuned | [Future] |
 | TBD | Dataset v1 Ready | 500+ samples, cleaned | [Future] |
 | TBD | Distilled Model v1 | LoRA fine-tuned model running | [Future] |
 | TBD | Evaluation Loop Active | Continuous improvement cycle running | [Future] |
@@ -293,67 +302,73 @@ gantt
 
 ## 11. Current Status & Next Steps
 
-### 11.1 Current Status (as of 2026-04-24)
+### 11.1 Current Status (as of 2026-05-08)
 
-> **[Green]** — Phase 1 implementation complete. All services written, tested, and benchmarked.
+> **[Green — Windows]** — All Windows services complete. 35 unit tests passing.
+> Fish Speech 1.5 running in WSL2 with torch.compile (5× speedup over Windows). Voice cloning
+> active with real Emirati Arabic + English reference voices. 84 filler WAVs generated.
+> TF-IDF intent classifier live (7 intents, bilingual, 0.46ms inference).
 >
-> Full pipeline codebase exists: STT → LLM → TTS with sentence-level streaming, structured latency tracking, SQLite metrics store, and auto-generated PERFORMANCE.md. 37 tests pass. Benchmark infrastructure operational (mocked services).
+> **[Pending — Mac]** — llm_server.py code is complete. Waiting to SSH to Mac Mini for
+> first deployment: install Python 3.11 + requirements + JAIS-2 GGUF → run start_llm_server.py.
 >
-> **Next gate:** Start Fish Speech service + confirm `ollama pull gemma4:e2b` complete → run first live pipeline test → measure real TTFA numbers.
+> **Next gate:** Mac Mini LLM server running → first end-to-end live pipeline test.
 
 ### 11.2 Work Package Progress
 
 | Work Package | Progress | Status |
 |---|---|---|
-| WP1: Base Pipeline | 6 / 6 tasks | [Complete — pending real-service smoke test] |
-| WP2: Behavior Control | 0 / 2 tasks | [Pending] |
-| WP3: Dataset Creation | 0 / 4 tasks | [Pending] |
-| WP4: LoRA Fine-Tuning | 0 / 3 tasks | [Pending] |
-| WP5: Evaluation Loop | 0 / 2 tasks | [Pending] |
-| WP6: Optional Enhancements | — | [Pending] |
+| WP1: Windows Pipeline | 8 / 8 tasks | [Complete] |
+| WP2: Mac Mini Setup | 0 / 5 tasks | [In Progress — awaiting access] |
+| WP3: Behavior Control | 0 / 2 tasks | [Pending] |
+| WP4: Dataset Creation | 0 / 4 tasks | [Pending] |
+| WP5: LoRA Fine-Tuning | 0 / 3 tasks | [Pending] |
+| WP6: Evaluation Loop | 0 / 2 tasks | [Pending] |
 
 ### 11.3 Next Steps
 
-| # | Action | Owner | Priority | Target Date |
-|---|---|---|---|---|
-| 1 | Confirm `ollama pull gemma4:e2b` complete; test `curl http://localhost:11434/api/tags` | Naman | [Critical] | 2026-04-25 |
-| 2 | Start Fish Speech 1.5 service: `pip install fish-speech` or Docker run | Naman | [Critical] | 2026-04-25 |
-| 3 | Run first live pipeline: `python -c "import asyncio; from backend.services.pipeline import run; ..."` | Naman | [High] | 2026-04-25 |
-| 4 | Run `python scripts/benchmark.py --iterations 10` with real services → real TTFA numbers | Naman | [High] | 2026-04-26 |
-| 5 | Begin Phase 2: tune system prompt in `prompt_builder.py`, test bilingual switching | Naman | [High] | 2026-04-27 |
-| 6 | Run `bash scripts/pre_push_check.sh` — all green before any push | Naman | [Critical] | 2026-04-25 |
+| # | Action | Owner | Priority |
+|---|---|---|---|
+| 1 | SSH to Mac Mini; install Python 3.11 + brew | Naman | [Critical] |
+| 2 | `git clone` repo on Mac; `pip install -r requirements-shared.txt -r requirements-mac.txt` | Naman | [Critical] |
+| 3 | `CMAKE_ARGS="-DGGML_METAL=on" pip install llama-cpp-python --no-cache-dir` | Naman | [Critical] |
+| 4 | Download JAIS-2 8B Q4 GGUF to `~/models/` on Mac | Naman | [Critical] |
+| 5 | Create `.env` on Mac: `HF_MACHINE_ROLE=server`, `HF_LLM_MODEL_PATH`, `HF_LLM_PORT=8080` | Naman | [Critical] |
+| 6 | `python scripts/start_llm_server.py` on Mac; verify `curl http://mac-mini.local:8080/healthz` | Naman | [Critical] |
+| 7 | On Windows: set `HF_LLM_SERVICE_URL=http://mac-mini.local:8080`; run `python scripts/start.py` | Naman | [High] |
+| 8 | Speak into mic — verify full pipeline end-to-end | Naman | [High] |
+| 9 | Record real pipeline_ttfa_ms from logs; update PERFORMANCE.md | Naman | [High] |
 
 **Priority scale:** `[Critical]` `[High]` `[Medium]` `[Low]`
 
 ### 11.4 Technology Stack
 
-| Layer | Technology | Version / Notes |
-|---|---|---|
-| LLM | Ollama → `gemma4:e2b` | Metal/MLX acceleration; OpenAI-compatible API |
-| STT | faster-whisper | Silero VAD built-in; utterance-triggered |
-| TTS | Fish Speech 1.5 | HTTP chunked streaming; DAC decoder only for POC |
-| Audio I/O | sounddevice | 16kHz in, 22050Hz out |
-| Backend | FastAPI + Pydantic | Async; SSE streaming endpoint |
-| Monitoring | SQLite + structured JSON | `data/metrics.db`; `@track_latency` decorator |
-| Benchmark | scripts/benchmark.py | Auto-generates `PERFORMANCE.md` |
-| Frontend | None (POC) | Vue 3 control panel deferred to post-POC |
-| Infrastructure | Docker (Azure production) | Ollama container + Fish Speech CUDA container |
-| Fallback LLM | Jais | Arabic-first; activate if Gemma bilingual quality fails |
-| Distillation TTS | F5-TTS + F5-TTS-Arabic | Phase 4+; replaces Fish Speech for better prosody |
+| Layer | Technology | Machine | Notes |
+|---|---|---|---|
+| STT | faster-whisper large-v3-turbo INT8 | Windows (CUDA) | Beam=1; EN/AR gate; confidence filters; script validation |
+| VAD | TEN VAD + Silero fallback | Windows | Threshold 0.80; 600ms silence; 128ms pre-roll |
+| LLM | JAIS-2 8B Q4 via llama.cpp | Mac Mini (Metal) | KV cache reuse; streaming NDJSON |
+| TTS | Fish Speech 1.5 | Windows WSL2 (CUDA) | torch.compile; voice cloning; 44100Hz |
+| Intent classifier | TF-IDF char n-gram | Windows | 7 intents; bilingual; 0.46ms |
+| Filler audio | Pre-generated WAVs | Windows (memory) | 84 clips; instant yield from memory |
+| Audio I/O | sounddevice | Windows | 16kHz capture; 44100Hz playback |
+| Backend | FastAPI + Pydantic | Both | Async; SSE streaming |
+| Monitoring | SQLite + structured JSON | Both | `data/metrics.db`; @track_latency |
+| Frontend | None (POC) | — | Deferred to post-POC |
 
 ### 11.5 Architecture Decisions
 
 | Date | Decision | Rationale | Alternatives Considered |
 |---|---|---|---|
-| 2026-04-24 | Ollama for LLM runtime | OpenAI-compatible API; Metal/MLX acceleration; Docker-native for Azure; model swap = zero code change | llama-cpp-python (not portable), LiteRT (Android-first, slow on Mac GPU) |
-| 2026-04-24 | gemma4:e2b via Ollama | Equivalent to local LiteRT model; GGUF format Ollama can serve; 5.1GB, fits Mac Mini RAM | Local .litertlm (incompatible format), gemma4:e4b (8GB, larger) |
-| 2026-04-24 | Fish Speech 1.5 for TTS | Streaming support; DAC codec (high quality); Arabic native; inline prosody tags | F5-TTS (diffusion = slow on Mac CPU), Kokoro (no Arabic), edge-tts (cloud) |
-| 2026-05-06 | Whisper domain optimization (Phase 2) | Use `initial_prompt` parameter with DEWA vocabulary (AR + EN) to boost recognition accuracy for domain-specific service keywords; deferred to after baseline latency benchmarking | Language classification layer (adds latency), fine-tuning Whisper (expensive), API-based STT (privacy concern) |
-| 2026-04-24 | Sentence-level LLM→TTS pipelining | Dramatically reduces TTFA — first audio plays while LLM still generating | Wait for full LLM response (adds 500-1000ms perceived latency) |
-| 2026-04-24 | Silero VAD via faster-whisper | No extra dependency; utterance-triggered STT is correct pattern for voice assistant | webrtcvad (extra dep), WhisperLive (live captioning pattern, wrong use case) |
-| 2026-04-24 | SQLite for latency metrics | Lightweight, local, queryable; benchmark and distillation tracking in one place | JSON files (not queryable), PostgreSQL (overkill for POC) |
-| 2026-04-24 | No frontend for POC | Reduces scope; voice interaction is sufficient to test pipeline | Vue 3 control panel (deferred to post-POC) |
-| 2026-04-24 | F5-TTS noted for distillation phase | Better voice cloning + prosody; Arabic fine-tune available; but diffusion too slow for Mac POC | Fish Speech voice cloning (Phase 6) |
+| 2026-04-24 | Fish Speech 1.5 for TTS | Streaming; inline prosody tags; Arabic native; voice cloning | F5-TTS (diffusion = slow), Kokoro (no Arabic), edge-tts (cloud) |
+| 2026-04-24 | Sentence-level LLM→TTS pipelining | First audio plays while LLM still generating; SentenceBuffer min=8+comma = 200-500ms faster | Wait for full LLM response (adds 500ms+ latency) |
+| 2026-05-05 | Fish Speech moved to WSL2 | torch.compile requires Triton (Linux only); 5× speedup: 13s→2.1s TTFA | Windows-native Fish Speech (no compile, slow) |
+| 2026-05-05 | JAIS-2 8B via llama.cpp (Mac) | Arabic-English bilingual; UAE-relevant; no OpenAI dependency; llama.cpp KV cache | Ollama/Gemma (weaker Arabic), cloud LLM (privacy violation) |
+| 2026-05-05 | Distributed Windows+Mac | Windows has CUDA for STT+TTS; Mac has unified memory for large LLM | Single-machine (GPU VRAM too split between models) |
+| 2026-05-06 | TF-IDF intent classifier | 0.46ms inference; bilingual; no GPU; deterministic | LLM intent (adds 200ms+), keyword matching (fragile) |
+| 2026-05-06 | Filler audio before real TTS | Intent-aware; yields from memory (instant); same voice as main TTS; hides pipeline latency | Silence (bad UX), generic beep (unnatural) |
+| 2026-05-07 | Real voice references for cloning | Emirati Arabic + English from real MP3 sources; more natural than Edge TTS synthetic | Edge TTS synthetic (robotic cloned output) |
+| 2026-05-08 | Whisper domain optimization (Phase 3) | `initial_prompt` with DEWA vocabulary; deferred until live pipeline established | Fine-tuning Whisper (expensive), API STT (privacy) |
 
 ---
 

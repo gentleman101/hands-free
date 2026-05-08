@@ -1,4 +1,5 @@
-# Shared dependencies — installed on both Windows (client) and Mac (server)
+# Shared dependencies — installed on BOTH Windows (client) and Mac (server)
+# Keep this list minimal: only what both machines actually import at runtime.
 
 # Backend framework
 fastapi>=0.115.0
@@ -7,7 +8,7 @@ pydantic>=2.10.0
 pydantic-settings>=2.7.0
 python-multipart>=0.0.20
 
-# HTTP client (for LLM RPC + Fish Speech calls)
+# HTTP client (LLM RPC + Fish Speech calls)
 httpx>=0.28.0
 
 # Database (latency metrics)
@@ -16,6 +17,3 @@ aiosqlite>=0.21.0
 # Utilities
 python-dotenv>=1.1.0
 python-json-logger>=3.2.0
-pyyaml>=6.0.0
-numpy>=2.2.0
-scikit-learn>=1.6.0

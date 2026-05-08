@@ -65,7 +65,7 @@ def _get_reference_audio(language: str) -> bytes | None:
 
 
 def _fish_url() -> str:
-    return os.environ.get("HF_FISH_SPEECH_URL", "http://localhost:8001")
+    return os.environ.get("HF_FISH_SPEECH_URL", "http://172.29.211.12:8001")
 
 
 # ─── Singleton httpx client (EXP-010) ───────────────────────────────────────
@@ -121,6 +121,7 @@ async def synthesize_stream(
         "format": "wav",
         "chunk_length": 200,
         "normalize": True,
+        "use_memory_cache": "on",
         **(
             {
                 "references": [
@@ -200,6 +201,40 @@ async def synthesize(
         ttfa_ms=ttfa_ms,
         duration_ms=duration_ms,
     )
+
+
+async def warmup() -> bool:
+    """
+    Pre-encode reference audio on startup so first real TTS call hits cache.
+    Fish Speech LRU-caches VQGAN encoding keyed by audio bytes — first call costs
+    ~12s, cached calls cost ~20ms. Call this once after server boots.
+    """
+    import ormsgpack
+
+    for lang in ("en", "ar"):
+        ref = _get_reference_audio(lang)
+        if ref is None:
+            continue
+        try:
+            payload = ormsgpack.packb(
+                {"audios": [ref]},
+                option=ormsgpack.OPT_SERIALIZE_PYDANTIC,
+            )
+            t0 = time.perf_counter()
+            resp = await _tts_client().post(
+                f"{_fish_url()}/v1/vqgan/encode",
+                data=payload,
+                headers={"Content-Type": "application/msgpack"},
+                timeout=60.0,
+            )
+            ms = int((time.perf_counter() - t0) * 1000)
+            if resp.status_code == 200:
+                log.info("tts warmup ok", extra={"language": lang, "encode_ms": ms})
+            else:
+                log.warning("tts warmup failed", extra={"language": lang, "status": resp.status_code})
+        except Exception as exc:
+            log.warning("tts warmup error", extra={"language": lang, "error": str(exc)})
+    return True
 
 
 async def health_check(timeout_s: float = 2.0) -> bool:

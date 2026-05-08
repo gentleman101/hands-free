@@ -98,26 +98,6 @@ async def ready() -> dict:
         raise HTTPException(status_code=503, detail=str(e))
 
 
-def _format_messages(messages: list[dict[str, str]]) -> str:
-    """Convert chat messages to a single prompt string for llama.cpp.
-
-    Most GGUF chat templates handle this internally via create_chat_completion,
-    but for streaming we format manually for full control.
-    """
-    parts: list[str] = []
-    for m in messages:
-        role = m.get("role", "user")
-        content = m.get("content", "")
-        if role == "system":
-            parts.append(f"<system>\n{content}\n</system>")
-        elif role == "user":
-            parts.append(f"<user>\n{content}\n</user>")
-        elif role == "assistant":
-            parts.append(f"<assistant>\n{content}\n</assistant>")
-    parts.append("<assistant>\n")
-    return "\n".join(parts)
-
-
 async def _stream_tokens(req: LLMRequest) -> AsyncIterator[bytes]:
     """Yield NDJSON token events."""
     model = _get_model()

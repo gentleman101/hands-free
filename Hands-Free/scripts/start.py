@@ -37,7 +37,6 @@ async def _play_wav(wav_bytes: bytes) -> None:
 
 async def _mic_loop(log: logging.Logger) -> None:
     from backend.services.audio_capture import AudioCapture
-    from backend.services.filler import FillerPlayer
     from backend.services.pipeline import PipelineResult, run_realtime
     from backend import config as cfg
 
@@ -46,27 +45,23 @@ async def _mic_loop(log: logging.Logger) -> None:
         vad_backend=config.vad_backend,
         device_env=config.audio_input_device,
     )
-    filler = FillerPlayer(play_fn=_play_wav)
 
     log.info("ready — speak into the mic")
     try:
         async for utterance in capture.utterances():
             out = PipelineResult()
-            print("\n🎤  utterance captured — processing...")
+            print("\n  utterance captured — processing...")
             chunks: list[bytes] = []
             async for chunk in run_realtime(
-                utterance, filler=filler, out=out
+                utterance, out=out
             ):
                 chunks.append(chunk)
             if not chunks:
                 print(f"  (no response — transcription empty: '{out.transcription}')")
                 continue
-            print(f"  📝 {out.language}: {out.transcription}")
-            print(f"  💬 {out.response_text}")
-            print(
-                f"  ⏱  pipeline_ttfa={out.latency.pipeline_ttfa_ms}ms, "
-                f"total={out.latency.total_ms}ms"
-            )
+            print(f"  [{out.language}] {out.transcription}")
+            print(f"  >> {out.response_text}")
+            print(f"  ttfa={out.latency.pipeline_ttfa_ms}ms  total={out.latency.total_ms}ms")
             # Play assembled audio
             wav = b"".join(chunks)
             await _play_wav(wav)
