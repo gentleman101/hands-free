@@ -46,6 +46,7 @@ def build_messages(
     *,
     language: str = "en",
     conversation_history: list[dict[str, str]] | None = None,
+    filler_text: str | None = None,
 ) -> list[dict[str, str]]:
     """
     Build the messages list for the LLM call.
@@ -53,10 +54,15 @@ def build_messages(
     Selects the language-specific system prompt so the model receives
     only the instructions relevant to the current language.
 
+    If filler_text is provided it is injected as a partial assistant turn
+    so the model completes the thought naturally — the filler audio and the
+    LLM reply stitch together as one seamless utterance.
+
     Args:
         transcription: What the user said.
         language: Detected language code ("en" | "ar").
         conversation_history: Prior turns as [{"role": "user"|"assistant", "content": str}].
+        filler_text: The filler phrase already played to the user (e.g. "Let me check your bill.").
 
     Returns:
         Messages list ready for the LLM client.
@@ -69,9 +75,18 @@ def build_messages(
 
     messages.append({"role": "user", "content": transcription})
 
+    if filler_text:
+        # Seed the assistant turn with the filler so the reply flows from it
+        messages.append({"role": "assistant", "content": filler_text})
+
     log.debug(
         "prompt built",
-        extra={"language": language, "turns": len(messages), "input_chars": len(transcription)},
+        extra={
+            "language": language,
+            "turns": len(messages),
+            "input_chars": len(transcription),
+            "filler": filler_text or "",
+        },
     )
     return messages
 

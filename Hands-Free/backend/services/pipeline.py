@@ -26,7 +26,7 @@ from typing import AsyncIterator
 from backend.database import fire_and_forget, insert_event
 from backend.services import llm_client, prompt_builder
 from backend.services import tts as tts_svc
-from backend.services.filler import stream_filler
+from backend.services.filler import pick_filler, stream_filler
 from backend.services.intent_classifier import classify
 
 log = logging.getLogger(__name__)
@@ -121,15 +121,19 @@ async def run_realtime(
         out.intent = intent
     log.debug("intent", extra={"intent": intent, "request_id": rid})
 
-    # ── 3. Filler — yield immediately from memory ────────────────────────────
-    async for filler_chunk in stream_filler(intent, transcript.language):
-        yield filler_chunk
+    # ── 3. Filler — pick once, stream audio, keep text for LLM context ───────
+    filler_data, filler_text = pick_filler(intent, transcript.language)
+    if filler_data:
+        chunk_size = 4096
+        for i in range(0, len(filler_data), chunk_size):
+            yield filler_data[i : i + chunk_size]
 
-    # ── 4. LLM stream ────────────────────────────────────────────────────────
+    # ── 4. LLM stream — seed with filler text so reply stitches naturally ────
     messages = prompt_builder.build_messages(
         transcript.text,
         language=transcript.language,
         conversation_history=conversation_history,
+        filler_text=filler_text or None,
     )
 
     buf = SentenceBuffer()
