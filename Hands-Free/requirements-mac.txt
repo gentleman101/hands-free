@@ -1,7 +1,7 @@
 # Mac Mini (server) dependencies — install alongside requirements-shared.txt
 # Hardware: Apple Silicon M4, 16GB unified memory
 
-# LLM — llama.cpp with Metal (Apple Silicon GPU) backend
-# Install with Metal enabled:
-#   CMAKE_ARGS="-DGGML_METAL=on" pip install llama-cpp-python --no-cache-dir
-llama-cpp-python>=0.3.0
+# LLM — Ollama (manages Metal/GPU offload internally)
+# Install Ollama separately: https://ollama.com/download
+# Then: ollama pull gemma4:e4b-it-q8_0
+# httpx is already in requirements-shared.txt (used for Ollama API calls)

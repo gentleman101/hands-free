@@ -32,10 +32,7 @@ def main() -> int:
         )
         return 1
 
-    # Optional pre-warm the model so first request isn't slow
-    if os.environ.get("HF_LLM_PREWARM", "1") == "1":
-        from backend.services import llm_server as srv
-        srv._get_model()
+    # Ollama manages model loading — no prewarm needed here
 
     uvicorn.run(
         "backend.services.llm_server:app",
