@@ -15,6 +15,7 @@ Apple-branch carry-overs:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -26,8 +27,9 @@ from typing import AsyncIterator
 from backend.database import fire_and_forget, insert_event
 from backend.services import llm_client, prompt_builder
 from backend.services import tts as tts_svc
-from backend.services.filler import pick_filler, stream_filler
+from backend.services.filler import pick_filler, pick_filler_semantic, stream_filler
 from backend.services.intent_classifier import classify
+from backend.services.tts_orchestrator import TTSOrchestrator
 
 log = logging.getLogger(__name__)
 
@@ -121,8 +123,13 @@ async def run_realtime(
         out.intent = intent
     log.debug("intent", extra={"intent": intent, "request_id": rid})
 
-    # ── 3. Filler — pick once, stream audio, keep text for LLM context ───────
-    filler_data, filler_text = pick_filler(intent, transcript.language)
+    # ── 3. Filler — semantic match to transcription (not just intent bucket) ──
+    # pick_filler_semantic embeds the transcription (~3-5 ms CPU) and cosine-sims
+    # against all pre-embedded filler texts, picking from the top-3 closest.
+    # Falls back to TF-IDF intent bucket if sentence-transformers unavailable.
+    filler_data, filler_text = pick_filler_semantic(
+        transcript.text, transcript.language, fallback_intent=intent
+    )
     if filler_data:
         chunk_size = 4096
         for i in range(0, len(filler_data), chunk_size):
@@ -144,19 +151,9 @@ async def run_realtime(
     llm_first = True
     llm_ttft_ms = 0
 
-    async for token in llm_client.generate_stream(
-        messages, language=transcript.language, request_id=rid
-    ):
-        if llm_first:
-            llm_ttft_ms = int((time.perf_counter() - t_llm) * 1000)
-            llm_first = False
-
-        response_chunks.append(token)
-        sentence = buf.feed(token)
-        if sentence is None:
-            continue
-
-        # ── 5. TTS per sentence ───────────────────────────────────────────────
+    async def _tts_and_yield(sentence: str):
+        """Synthesize a sentence and yield chunks, recording TTFA on first chunk."""
+        nonlocal pipeline_ttfa_recorded
         async for audio_chunk in tts_svc.synthesize_stream(
             sentence, transcript.language, request_id=rid
         ):
@@ -182,14 +179,26 @@ async def run_realtime(
                 ))
             yield audio_chunk
 
-    # ── 6. Flush tail ─────────────────────────────────────────────────────────
+    # Sequential per-sentence TTS — wait for each sentence to finish before next
+    async for token in llm_client.generate_stream(
+        messages, language=transcript.language, request_id=rid
+    ):
+        if llm_first:
+            llm_ttft_ms = int((time.perf_counter() - t_llm) * 1000)
+            llm_first = False
+        response_chunks.append(token)
+        sentence = buf.feed(token)
+        if sentence is None:
+            continue
+        async for audio_chunk in _tts_and_yield(sentence):
+            yield audio_chunk
+
+    # Flush tail
     llm_total_ms = int((time.perf_counter() - t_llm) * 1000)
     remaining = buf.flush()
     if remaining:
         response_chunks.append(remaining)
-        async for audio_chunk in tts_svc.synthesize_stream(
-            remaining, transcript.language, request_id=rid
-        ):
+        async for audio_chunk in _tts_and_yield(remaining):
             yield audio_chunk
 
     if out is not None:
