@@ -36,132 +36,136 @@ REFS = {
     },
 }
 
-# 7 intents x 2 languages x 3 variants = 42 WAVs
+# 7 intents x 2 languages x 6 variants = 84 WAVs
+# Variant structure per intent:
+#   1-2: clean, short, generic
+#   3-4: light prosody (ohh, okay)
+#   5-6: heavy prosody (umm..., aaah..., ohhh kaaay) — sounds most human
 FILLERS: dict[str, dict[str, list[str]]] = {
     "billing": {
         "en": [
-            "Let me pull up your bill.",
+            "Let me pull that up.",
             "Checking your account now.",
-            "One moment, looking at your balance.",
-            "Ooh okay, let me check your bill real quick.",
-            "Absolutely, pulling up your account.",
-            "Umm, let me grab those details for you.",
+            "Ohh okay, one moment.",
+            "Sure, let me grab those details.",
+            "Umm... yeah sure, getting it right away.",
+            "Aaah... yes... got it, one sec.",
         ],
         "ar": [
-            "دعني أتحقق من فاتورتك.",
-            "لحظة وأجلب لك التفاصيل.",
-            "سأتحقق من حسابك الآن.",
-            "آه، دعني أتحقق من فاتورتك بسرعة.",
-            "بالتأكيد، سأجلب تفاصيل حسابك.",
-            "حسناً، لحظة وأرى ذلك.",
+            "دعني أجلب ذلك.",
+            "أتحقق من حسابك الآن.",
+            "أوه حسناً، لحظة.",
+            "نعم، دعني آخذ تلك التفاصيل.",
+            "مم... نعم بالتأكيد، على الفور.",
+            "آه... نعم... تمام، ثانية.",
         ],
     },
     "location": {
         "en": [
-            "Let me find the nearest center for you.",
-            "Checking locations near you.",
-            "One moment, searching nearby.",
-            "Ooh sure, let me find that for you.",
-            "Absolutely, looking up centers near you.",
-            "Umm, let me search that real quick.",
+            "Let me find that for you.",
+            "Checking what's nearest to you.",
+            "Ohh okay, looking that up.",
+            "Sure, finding the closest one!",
+            "Umm... yeah, let me check what's near you.",
+            "Aaah... yes, on it.",
         ],
         "ar": [
-            "دعني أجد أقرب مركز لك.",
-            "لحظة وأبحث في المواقع القريبة.",
-            "سأتحقق من المواقع المتاحة.",
-            "آه، دعني أجد أقرب مكان لك.",
-            "بالتأكيد، سأبحث في المواقع القريبة.",
-            "حسناً، لحظة وأبحث.",
+            "دعني أجد ذلك لك.",
+            "أتحقق مما هو أقرب إليك.",
+            "أوه حسناً، أبحث عن ذلك.",
+            "نعم، أجد الأقرب!",
+            "مم... نعم، دعني أتحقق مما هو قريب منك.",
+            "آه... نعم، على الفور.",
         ],
     },
     "outage": {
         "en": [
-            "Let me check the outage status.",
-            "Checking your area right now.",
-            "One moment, looking into that.",
-            "Ohh okay, let me check what's happening.",
-            "Sure, looking into the outage now.",
-            "Umm, let me see what's going on in your area.",
+            "Let me check on that.",
+            "Checking your area now.",
+            "Ohh okay, looking into that.",
+            "Sure, on it!",
+            "Umm... yeah, let me see what's happening.",
+            "Aaah... yes, checking right now.",
         ],
         "ar": [
-            "دعني أتحقق من حالة الانقطاع.",
-            "لحظة وأتحقق من منطقتك.",
-            "سأفحص الوضع الآن.",
-            "آه، دعني أرى ما يحدث.",
-            "بالتأكيد، سأتحقق من الانقطاع الآن.",
-            "حسناً، لحظة وأفحص منطقتك.",
+            "دعني أتحقق من ذلك.",
+            "أتحقق من منطقتك الآن.",
+            "أوه حسناً، أنظر في ذلك.",
+            "نعم، حاضر!",
+            "مم... نعم، دعني أرى ما يحدث.",
+            "آه... نعم، أتحقق الآن.",
         ],
     },
     "account": {
         "en": [
-            "Let me access your account.",
-            "Checking your details now.",
-            "One moment with your account.",
-            "Ohh okay, pulling up your account now.",
-            "Absolutely, let me grab your details.",
-            "Sure thing, one sec.",
+            "Let me pull that up.",
+            "Checking your details.",
+            "Ohh okay, one moment.",
+            "Sure, got it!",
+            "Umm... yeah, let me get that for you.",
+            "Aaah... yes... got it.",
         ],
         "ar": [
-            "دعني أصل إلى حسابك.",
-            "لحظة وأتحقق من بياناتك.",
-            "سأراجع حسابك الآن.",
-            "آه، دعني أفتح حسابك الآن.",
-            "بالتأكيد، سأجلب بياناتك.",
-            "حسناً، لحظة واحدة.",
+            "دعني أجلب ذلك.",
+            "أتحقق من بياناتك.",
+            "أوه حسناً، لحظة.",
+            "نعم، تمام!",
+            "مم... نعم، دعني أجلب ذلك لك.",
+            "آه... نعم... تمام.",
         ],
     },
     "service_request": {
         "en": [
-            "Let me look into that service.",
-            "Checking what's available for you.",
-            "One moment, processing that.",
-            "Ohh okay, let me see what we can do.",
-            "Absolutely, looking into that right now.",
-            "Sure thing, give me just a second.",
+            "Let me look into that.",
+            "Checking what we can do.",
+            "Ohh okay, let me see.",
+            "Yes, sure, on it!",
+            "Umm... yeah sure, getting it right away.",
+            "Aaah... yes... got it, one moment.",
         ],
         "ar": [
-            "دعني أتحقق من الخدمة المطلوبة.",
-            "لحظة وأرى ما يمكن تقديمه.",
-            "سأتحقق من الخيارات المتاحة.",
-            "آه، دعني أرى ما يمكن فعله.",
-            "بالتأكيد، سأتحقق من ذلك الآن.",
-            "حسناً، لحظة وأرى الخيارات.",
+            "دعني أنظر في ذلك.",
+            "أتحقق مما يمكن فعله.",
+            "أوه حسناً، دعني أرى.",
+            "نعم، بالتأكيد، حاضر!",
+            "مم... نعم بالتأكيد، جاري الحصول عليه.",
+            "آه... نعم... تمام، لحظة.",
         ],
     },
     "sustainability": {
         "en": [
             "Let me find that for you.",
-            "Checking our sustainability info.",
-            "One moment, looking that up.",
-            "Ohh sure, looking that up now.",
-            "Absolutely, let me find that info.",
-            "Umm, give me just a moment on that.",
+            "Checking on that now.",
+            "Ohhh kaaay, let me look that up.",
+            "Sure, on it!",
+            "Umm... yeah, let me get that info.",
+            "Aaah... yes, looking that up.",
         ],
         "ar": [
-            "دعني أجلب تلك المعلومات.",
-            "لحظة وأبحث في ذلك.",
-            "سأتحقق من معلومات الاستدامة.",
-            "آه، دعني أجد تلك المعلومات.",
-            "بالتأكيد، سأبحث في ذلك الآن.",
-            "حسناً، لحظة وأتحقق.",
+            "دعني أجد ذلك لك.",
+            "أتحقق من ذلك الآن.",
+            "أووه حسناً، دعني أبحث عن ذلك.",
+            "نعم، حاضر!",
+            "مم... نعم، دعني أجلب تلك المعلومات.",
+            "آه... نعم، أبحث عن ذلك.",
         ],
     },
     "general": {
         "en": [
-            "One moment please.",
-            "Let me check that for you.",
-            "Sure, just a moment.",
-            "Umm, one sec.",
-            "Ohh okay, let me check.",
-            "Absolutely, just a moment.",
+            "One moment.",
+            "Let me check.",
+            "Ohh okay, one sec.",
+            "Ohhh kaaay, let me fetch that quickly.",
+            "Umm... yeah sure, getting it right away.",
+            "Aaah... yes... got it.",
         ],
         "ar": [
-            "لحظة من فضلك.",
-            "دعني أتحقق من ذلك.",
-            "حسناً، لحظة واحدة.",
-            "آه، ثانية واحدة.",
-            "حسناً، دعني أتحقق.",
-            "بالتأكيد، لحظة.",
+            "لحظة.",
+            "دعني أتحقق.",
+            "أوه حسناً، ثانية.",
+            "أووه حسناً، دعني أجلب ذلك بسرعة.",
+            "مم... نعم بالتأكيد، على الفور.",
+            "آه... نعم... تمام.",
         ],
     },
 }
@@ -201,7 +205,7 @@ def save_wav(raw: bytes, path: Path) -> None:
         wf.writeframes(raw)
 
 
-async def main() -> None:
+async def main(force: bool = False) -> None:
     async with httpx.AsyncClient() as client:
         try:
             r = await client.get(f"{FISH_URL}/v1/health", timeout=3.0)
@@ -213,14 +217,14 @@ async def main() -> None:
 
     total = sum(len(v[lang]) for v in FILLERS.values() for lang in ("en", "ar"))
     done = 0
-    print(f"Generating {total} filler WAVs...\n")
+    print(f"Generating {total} filler WAVs{' (force-overwrite)' if force else ''}...\n")
 
     async with httpx.AsyncClient() as client:
         for intent, langs in FILLERS.items():
             for lang, phrases in langs.items():
                 for i, phrase in enumerate(phrases, start=1):
                     out = OUT_DIR / lang / f"{intent}_{i}.wav"
-                    if out.exists():
+                    if out.exists() and not force:
                         done += 1
                         print(f"  [skip] {lang}/{intent}_{i}.wav")
                         continue
@@ -229,7 +233,7 @@ async def main() -> None:
                         raw = await synthesize(client, phrase, lang)
                         save_wav(raw, out)
                         ms = int((time.perf_counter() - t0) * 1000)
-                        display = phrase[:50].encode("ascii", "replace").decode()
+                        display = phrase[:60].encode("ascii", "replace").decode()
                         print(f"  [{done+1:02d}/{total}] {lang}/{intent}_{i}.wav  ({ms}ms)  \"{display}\"")
                     except Exception as exc:
                         print(f"  [ERR] {lang}/{intent}_{i}: {exc}")
@@ -239,4 +243,8 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--force", action="store_true", help="overwrite existing WAVs")
+    args = parser.parse_args()
+    asyncio.run(main(force=args.force))

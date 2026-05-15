@@ -189,35 +189,134 @@ _FILLER_DESCRIPTIONS: dict[str, dict[str, list[str]]] = {
     },
 }
 
-# Filler texts mirror generate_fillers.py FILLERS — order must match WAV numbering
+# Filler texts — MUST match generate_fillers.py FILLERS exactly (same order = same WAV index).
+# Variants 1-2: clean/short. 3-4: light prosody. 5-6: heavy prosody (most human-sounding).
 _FILLER_TEXTS: dict[str, dict[str, list[str]]] = {
     "billing": {
-        "en": ["Let me pull up your bill.", "Checking your account now.", "One moment, looking at your balance.", "Ooh okay, let me check your bill real quick.", "Absolutely, pulling up your account.", "Umm, let me grab those details for you."],
-        "ar": ["دعني أتحقق من فاتورتك.", "لحظة وأجلب لك التفاصيل.", "سأتحقق من حسابك الآن.", "آه، دعني أتحقق من فاتورتك بسرعة.", "بالتأكيد، سأجلب تفاصيل حسابك.", "حسناً، لحظة وأرى ذلك."],
+        "en": [
+            "Let me pull that up.",
+            "Checking your account now.",
+            "Ohh okay, one moment.",
+            "Sure, let me grab those details.",
+            "Umm... yeah sure, getting it right away.",
+            "Aaah... yes... got it, one sec.",
+        ],
+        "ar": [
+            "دعني أجلب ذلك.",
+            "أتحقق من حسابك الآن.",
+            "أوه حسناً، لحظة.",
+            "نعم، دعني آخذ تلك التفاصيل.",
+            "مم... نعم بالتأكيد، على الفور.",
+            "آه... نعم... تمام، ثانية.",
+        ],
     },
     "location": {
-        "en": ["Let me find the nearest center for you.", "Checking locations near you.", "One moment, searching nearby.", "Ooh sure, let me find that for you.", "Absolutely, looking up centers near you.", "Umm, let me search for that."],
-        "ar": ["دعني أجد أقرب مركز لك.", "لحظة وأبحث في المواقع القريبة.", "سأتحقق من المواقع المتاحة.", "آه، دعني أجد أقرب مكان لك.", "بالتأكيد، سأبحث في المواقع القريبة.", "حسناً، لحظة وأبحث."],
+        "en": [
+            "Let me find that for you.",
+            "Checking what's nearest to you.",
+            "Ohh okay, looking that up.",
+            "Sure, finding the closest one!",
+            "Umm... yeah, let me check what's near you.",
+            "Aaah... yes, on it.",
+        ],
+        "ar": [
+            "دعني أجد ذلك لك.",
+            "أتحقق مما هو أقرب إليك.",
+            "أوه حسناً، أبحث عن ذلك.",
+            "نعم، أجد الأقرب!",
+            "مم... نعم، دعني أتحقق مما هو قريب منك.",
+            "آه... نعم، على الفور.",
+        ],
     },
     "outage": {
-        "en": ["Let me check the outage status.", "Checking your area right now.", "One moment, looking into that.", "Ohh okay, let me check what's happening.", "Sure, looking into the outage now.", "Umm, let me check on that."],
-        "ar": ["دعني أتحقق من حالة الانقطاع.", "لحظة وأتحقق من منطقتك.", "سأفحص الوضع الآن.", "آه، دعني أرى ما يحدث.", "بالتأكيد، سأتحقق من الانقطاع الآن.", "حسناً، لحظة وأتحقق."],
+        "en": [
+            "Let me check on that.",
+            "Checking your area now.",
+            "Ohh okay, looking into that.",
+            "Sure, on it!",
+            "Umm... yeah, let me see what's happening.",
+            "Aaah... yes, checking right now.",
+        ],
+        "ar": [
+            "دعني أتحقق من ذلك.",
+            "أتحقق من منطقتك الآن.",
+            "أوه حسناً، أنظر في ذلك.",
+            "نعم، حاضر!",
+            "مم... نعم، دعني أرى ما يحدث.",
+            "آه... نعم، أتحقق الآن.",
+        ],
     },
     "account": {
-        "en": ["Let me access your account.", "Checking your details now.", "One moment with your account.", "Ohh okay, pulling up your account now.", "Absolutely, let me grab your details.", "Umm, checking your account."],
-        "ar": ["دعني أصل إلى حسابك.", "لحظة وأتحقق من بياناتك.", "سأراجع حسابك الآن.", "آه، دعني أفتح حسابك الآن.", "بالتأكيد، سأجلب بياناتك.", "حسناً، لحظة وأراجع."],
+        "en": [
+            "Let me pull that up.",
+            "Checking your details.",
+            "Ohh okay, one moment.",
+            "Sure, got it!",
+            "Umm... yeah, let me get that for you.",
+            "Aaah... yes... got it.",
+        ],
+        "ar": [
+            "دعني أجلب ذلك.",
+            "أتحقق من بياناتك.",
+            "أوه حسناً، لحظة.",
+            "نعم، تمام!",
+            "مم... نعم، دعني أجلب ذلك لك.",
+            "آه... نعم... تمام.",
+        ],
     },
     "service_request": {
-        "en": ["Let me look into that service.", "Checking what's available for you.", "One moment, processing that.", "Ohh okay, let me see what we can do.", "Absolutely, looking into that right now.", "Umm, let me check on that service."],
-        "ar": ["دعني أتحقق من الخدمة المطلوبة.", "لحظة وأرى ما يمكن تقديمه.", "سأتحقق من الخيارات المتاحة.", "آه، دعني أرى ما يمكن فعله.", "بالتأكيد، سأتحقق من ذلك الآن.", "حسناً، لحظة وأرى."],
+        "en": [
+            "Let me look into that.",
+            "Checking what we can do.",
+            "Ohh okay, let me see.",
+            "Yes, sure, on it!",
+            "Umm... yeah sure, getting it right away.",
+            "Aaah... yes... got it, one moment.",
+        ],
+        "ar": [
+            "دعني أنظر في ذلك.",
+            "أتحقق مما يمكن فعله.",
+            "أوه حسناً، دعني أرى.",
+            "نعم، بالتأكيد، حاضر!",
+            "مم... نعم بالتأكيد، جاري الحصول عليه.",
+            "آه... نعم... تمام، لحظة.",
+        ],
     },
     "sustainability": {
-        "en": ["Let me find that for you.", "Checking our sustainability info.", "One moment, looking that up.", "Ohh sure, looking that up now.", "Absolutely, let me find that info.", "Umm, let me look that up."],
-        "ar": ["دعني أجلب تلك المعلومات.", "لحظة وأبحث في ذلك.", "سأتحقق من معلومات الاستدامة.", "آه، دعني أجد تلك المعلومات.", "بالتأكيد، سأجلب المعلومات.", "حسناً، لحظة وأبحث."],
+        "en": [
+            "Let me find that for you.",
+            "Checking on that now.",
+            "Ohhh kaaay, let me look that up.",
+            "Sure, on it!",
+            "Umm... yeah, let me get that info.",
+            "Aaah... yes, looking that up.",
+        ],
+        "ar": [
+            "دعني أجد ذلك لك.",
+            "أتحقق من ذلك الآن.",
+            "أووه حسناً، دعني أبحث عن ذلك.",
+            "نعم، حاضر!",
+            "مم... نعم، دعني أجلب تلك المعلومات.",
+            "آه... نعم، أبحث عن ذلك.",
+        ],
     },
     "general": {
-        "en": ["Let me check on that.", "One moment please.", "Looking into that now.", "Ohh okay, let me check.", "Sure, one moment.", "Umm, let me see."],
-        "ar": ["دعني أتحقق من ذلك.", "لحظة من فضلك.", "سأتحقق الآن.", "آه، حسناً، لحظة.", "بالتأكيد، لحظة.", "حسناً، دعني أرى."],
+        "en": [
+            "One moment.",
+            "Let me check.",
+            "Ohh okay, one sec.",
+            "Ohhh kaaay, let me fetch that quickly.",
+            "Umm... yeah sure, getting it right away.",
+            "Aaah... yes... got it.",
+        ],
+        "ar": [
+            "لحظة.",
+            "دعني أتحقق.",
+            "أوه حسناً، ثانية.",
+            "أووه حسناً، دعني أجلب ذلك بسرعة.",
+            "مم... نعم بالتأكيد، على الفور.",
+            "آه... نعم... تمام.",
+        ],
     },
 }
 
