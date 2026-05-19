@@ -18,7 +18,7 @@ _SYSTEM_PROMPT_EN = """You are Rammas, DEWA's AI voice assistant — Dubai Elect
 
 CRITICAL: Reply in English only. Never switch to Arabic regardless of the question.
 
-Keep replies SHORT: 1 sentence, 2 max. Under 20 words. Voice users hate long answers.
+Keep replies SHORT: 1 sentence, 2 max. Under 20 words.
 
 Rules:
 - Use contractions: it's, you're, I'll
@@ -26,9 +26,10 @@ Rules:
 - Never start with "Certainly", "Of course", or "Absolutely"
 - Don't introduce yourself unless asked
 - Don't repeat the user's question back
+- Never say "I'll check", "let me look", "I'll find" — just give the answer directly, even if approximate
 
 Domain: DEWA services — billing, outages, service requests, accounts, sustainability.
-If you don't know, say so briefly and offer to connect DEWA support at 991."""
+If you don't know, make a plausible short response."""
 
 
 _SYSTEM_PROMPT_AR = """أنت رمّاس، المساعد الصوتي الذكي لديوا — هيئة كهرباء ومياه دبي.
@@ -42,9 +43,26 @@ CRITICAL: رُدَّ بالعربية فقط. ممنوع استخدام أي ك�
 - لا تبدأ بـ"بالتأكيد" أو "بكل سرور" أو "بالتأكيد"
 - لا تعرّف بنفسك إلا إذا سُئلت
 - لا تكرر سؤال المستخدم
+- لا تقل "سأتحقق" أو "سأبحث" أو "سأجد" — أجب مباشرةً ولو بشكل تقريبي
 
 المجال: خدمات ديوا — الفواتير، البلاغات، طلبات الخدمة، الحسابات، الاستدامة.
-إذا لم تعرف الإجابة، قل ذلك بإيجاز واعرض التواصل مع دعم ديوا على الرقم 991."""
+إذا لم تعرف الإجابة، قدّم رداً قصيراً ومعقولاً."""
+
+
+_FILLER_SUFFIX_EN = """
+
+The user already heard this spoken aloud before your reply: "{filler}"
+Continue directly from that — your response is the second half of that sentence.
+Do not repeat it. Do not greet. Do not start a new sentence.
+Example: filler "Let me pull that up," → you reply "your balance is AED 342, due on the 15th.\""""
+
+
+_FILLER_SUFFIX_AR = """
+
+المستخدم سمع هذه العبارة بالفعل قبل ردك: "{filler}"
+أكمل مباشرةً من بعدها — ردك هو النصف الثاني من تلك الجملة.
+لا تكررها. لا تسلّم. لا تبدأ جملة جديدة.
+مثال: عبارة "دعني أجلب ذلك،" → تُكمل "رصيدك ٣٤٢ درهماً، مستحق في ١٥ من الشهر.\""""
 
 
 def build_messages(
@@ -57,33 +75,24 @@ def build_messages(
     """
     Build the messages list for the LLM call.
 
-    Selects the language-specific system prompt so the model receives
-    only the instructions relevant to the current language.
-
-    If filler_text is provided it is injected as a partial assistant turn
-    so the model completes the thought naturally — the filler audio and the
-    LLM reply stitch together as one seamless utterance.
-
-    Args:
-        transcription: What the user said.
-        language: Detected language code ("en" | "ar").
-        conversation_history: Prior turns as [{"role": "user"|"assistant", "content": str}].
-        filler_text: The filler phrase already played to the user (e.g. "Let me check your bill.").
-
-    Returns:
-        Messages list ready for the LLM client.
+    Selects the language-specific system prompt. If filler_text is provided,
+    the continuation instruction is appended to the system prompt so the model
+    knows to complete the thought — not start fresh.
     """
-    prompt = _SYSTEM_PROMPT_AR if language == "ar" else _SYSTEM_PROMPT_EN
+    base = _SYSTEM_PROMPT_AR if language == "ar" else _SYSTEM_PROMPT_EN
+
+    if filler_text:
+        suffix = _FILLER_SUFFIX_AR if language == "ar" else _FILLER_SUFFIX_EN
+        prompt = base + suffix.format(filler=filler_text)
+    else:
+        prompt = base
+
     messages: list[dict[str, str]] = [{"role": "system", "content": prompt}]
 
     if conversation_history:
         messages.extend(conversation_history)
 
     messages.append({"role": "user", "content": transcription})
-
-    if filler_text:
-        # Seed the assistant turn with the filler so the reply flows from it
-        messages.append({"role": "assistant", "content": filler_text})
 
     log.debug(
         "prompt built",
@@ -97,6 +106,10 @@ def build_messages(
     return messages
 
 
-def get_system_prompt(language: str = "en") -> str:
+def get_system_prompt(language: str = "en", filler_text: str | None = None) -> str:
     """Return the system prompt for the given language (for testing / display)."""
-    return _SYSTEM_PROMPT_AR if language == "ar" else _SYSTEM_PROMPT_EN
+    base = _SYSTEM_PROMPT_AR if language == "ar" else _SYSTEM_PROMPT_EN
+    if filler_text:
+        suffix = _FILLER_SUFFIX_AR if language == "ar" else _FILLER_SUFFIX_EN
+        return base + suffix.format(filler=filler_text)
+    return base

@@ -64,12 +64,12 @@ def load() -> Config:
     """Load Config from env. Call once at startup."""
     return Config(
         machine_role=os.environ.get("HF_MACHINE_ROLE", "client"),
-        llm_service_url=os.environ.get("HF_LLM_SERVICE_URL", "http://mac-mini.local:11434"),
-        llm_timeout_s=float(os.environ.get("HF_LLM_TIMEOUT_S", "10")),
+        llm_service_url=os.environ.get("HF_LLM_SERVICE_URL", "http://mac-mini.local:8080"),
+        llm_timeout_s=float(os.environ.get("HF_LLM_TIMEOUT_S", "120")),
         llm_max_retries=int(os.environ.get("HF_LLM_MAX_RETRIES", "3")),
         llm_model_path=os.environ.get("HF_LLM_MODEL_PATH", ""),
-        llm_model_name=os.environ.get("HF_LLM_MODEL_NAME", "jais-2-8b"),
-        llm_port=int(os.environ.get("HF_LLM_PORT", "11434")),
+        llm_model_name=os.environ.get("HF_LLM_MODEL_NAME", "gemma4:e4b"),
+        llm_port=int(os.environ.get("HF_LLM_PORT", "8080")),
         llm_n_gpu_layers=int(os.environ.get("HF_LLM_N_GPU_LAYERS", "99")),
         llm_n_ctx=int(os.environ.get("HF_LLM_N_CTX", "2048")),
         max_tokens=int(os.environ.get("HF_MAX_TOKENS", "200")),

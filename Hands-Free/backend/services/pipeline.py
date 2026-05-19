@@ -94,6 +94,7 @@ async def run_realtime(
     request_id: str | None = None,
     conversation_history: list[dict[str, str]] | None = None,
     out: PipelineResult | None = None,
+    filler_done: asyncio.Event | None = None,
 ) -> AsyncIterator[bytes]:
     """
     Run a full realtime pipeline turn. Yields audio bytes.
@@ -123,19 +124,22 @@ async def run_realtime(
         out.intent = intent
     log.debug("intent", extra={"intent": intent, "request_id": rid})
 
-    # ── 3. Filler — semantic match to transcription (not just intent bucket) ──
-    # pick_filler_semantic embeds the transcription (~3-5 ms CPU) and cosine-sims
-    # against all pre-embedded filler texts, picking from the top-3 closest.
-    # Falls back to TF-IDF intent bucket if sentence-transformers unavailable.
-    filler_data, filler_text = pick_filler_semantic(
-        transcript.text, transcript.language, fallback_intent=intent
-    )
-    if filler_data:
-        chunk_size = 4096
-        for i in range(0, len(filler_data), chunk_size):
-            yield filler_data[i : i + chunk_size]
+    # ── 3. Filler — EXP: disable with HF_FILLER_ENABLED=0 ───────────────────
+    import os as _os
+    filler_text = None
+    if _os.environ.get("HF_FILLER_ENABLED", "1") != "0":
+        filler_data, filler_text = pick_filler_semantic(
+            transcript.text, transcript.language, fallback_intent=intent
+        )
+        if filler_data:
+            chunk_size = 4096
+            for i in range(0, len(filler_data), chunk_size):
+                yield filler_data[i : i + chunk_size]
 
-    # ── 4. LLM stream — seed with filler text so reply stitches naturally ────
+    if filler_done is not None:
+        filler_done.set()
+
+    # ── 4. LLM stream — filler instruction baked into system prompt ──────────
     messages = prompt_builder.build_messages(
         transcript.text,
         language=transcript.language,

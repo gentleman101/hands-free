@@ -411,8 +411,10 @@ def _ensure_loaded() -> None:
 # Start loading WAVs + SBERT model at import time so the 5-10 s model load
 # happens during app startup, not during the first utterance.
 # Daemon thread — does not block import or the asyncio event loop.
-_preload_thread = _threading.Thread(target=_ensure_loaded, daemon=True, name="filler-preload")
-_preload_thread.start()
+import os as _os
+if _os.environ.get("HF_FILLER_ENABLED", "1") != "0":
+    _preload_thread = _threading.Thread(target=_ensure_loaded, daemon=True, name="filler-preload")
+    _preload_thread.start()
 
 
 def get_filler(intent: str, language: str) -> tuple[bytes, str] | tuple[None, None]:

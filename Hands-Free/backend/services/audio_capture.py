@@ -37,7 +37,9 @@ _CHUNK_SAMPLES = 512                  # 32ms at 16kHz; matches Silero VAD frame 
 _CHUNK_MS = int(_CHUNK_SAMPLES / _SAMPLE_RATE * 1000)
 
 # VAD tuning (from Apple EXP-011 + audio_capture.py)
-_SPEECH_THRESHOLD = 0.80              # EXP-011: raised from 0.70 to cut false fires
+# Override at runtime with HF_VAD_THRESHOLD env var (e.g. 0.5 for quieter mics)
+import os as _os
+_SPEECH_THRESHOLD = float(_os.environ.get("HF_VAD_THRESHOLD", "0.80"))
 _SILENCE_DURATION_MS = 600            # ms of silence to end utterance
 _SILENCE_CHUNKS = _SILENCE_DURATION_MS // _CHUNK_MS
 _MIN_SPEECH_CHUNKS = 8                # ~256ms minimum speech (Silero default)
@@ -45,68 +47,33 @@ _PREFIX_CHUNKS = 4                    # ~128ms pre-roll (prevents first-word cli
 _MAX_UTTERANCE_S = 30                 # hard cap to prevent runaway buffers
 _ENERGY_FALLBACK_THRESHOLD = 0.02     # RMS gate when no neural VAD available
 
-# Device priority (Apple)
-_SKIP_KEYWORDS = ("nomachine", "virtual", "aggregate", "displayport", "hdmi")
-_EXTERNAL_KEYWORDS = (
-    "bluetooth", "airpods", "headset", "headphone", "earpod", "buds",
-    "bose", "sony", "jabra", "beats", "usb", "external",
-)
-_BUILTIN_KEYWORDS = ("built-in", "macbook", "mac mini", "internal", "microphone array")
-
-
 # ─── Device selection ───────────────────────────────────────────────────────
-def list_input_devices() -> list[tuple[int, str]]:
-    """Return [(index, name)] for every real input device (skips virtual/HDMI)."""
-    return [
-        (i, str(dev["name"]))  # type: ignore[index]
-        for i, dev in enumerate(sd.query_devices())
-        if dev["max_input_channels"] > 0  # type: ignore[index]
-        and not any(kw in str(dev["name"]).lower() for kw in _SKIP_KEYWORDS)  # type: ignore[index]
-    ]
+def _resolve_device(env_value: str) -> int | str | None:
+    """Return device to use for input.
 
-
-def _pick_input_device(devices: list[tuple[int, str]]) -> int | None:
-    """Priority: External (BT/USB) > built-in > first available."""
-    if not devices:
-        log.warning("no input devices found — connect a mic or set HF_AUDIO_INPUT_DEVICE")
-        return None
-
-    name_lower = [(i, n, n.lower()) for i, n in devices]
-
-    for i, name, nl in name_lower:
-        if any(kw in nl for kw in _EXTERNAL_KEYWORDS):
-            log.info("selected external input", extra={"device_id": i, "name": name})
-            return i
-
-    for i, name, nl in name_lower:
-        if any(kw in nl for kw in _BUILTIN_KEYWORDS):
-            log.info("selected built-in input", extra={"device_id": i, "name": name})
-            return i
-
-    i, name, _ = name_lower[0]
-    log.info("selected first available input", extra={"device_id": i, "name": name})
-    return i
-
-
-def _resolve_device(env_value: str) -> int | None:
-    """Resolve HF_AUDIO_INPUT_DEVICE env value (id, name, or empty for auto)."""
-    devices = list_input_devices()
-    log.debug("available input devices", extra={"devices": devices})
-
+    Priority:
+    1. HF_AUDIO_INPUT_DEVICE env var (numeric id or name substring)
+    2. Windows default input device (if one is set)
+    3. First available input device
+    """
     if env_value:
-        # Numeric id?
         if env_value.isdigit():
-            idx = int(env_value)
-            if any(i == idx for i, _ in devices):
-                return idx
-        # Name match (case-insensitive substring)
-        env_lower = env_value.lower()
-        for i, n in devices:
-            if env_lower in n.lower():
-                return i
-        log.warning("HF_AUDIO_INPUT_DEVICE not matched", extra={"value": env_value})
+            return int(env_value)
+        return env_value
 
-    return _pick_input_device(devices)
+    # Use Windows default if set
+    default_input = sd.default.device[0]
+    if default_input >= 0:
+        log.info("using system default input device", extra={"device_id": default_input})
+        return default_input
+
+    # Fall back to first available input
+    inputs = [i for i, d in enumerate(sd.query_devices()) if d["max_input_channels"] > 0]
+    if inputs:
+        log.info("no default input set, using first available", extra={"device_id": inputs[0]})
+        return inputs[0]
+
+    return None
 
 
 # ─── VAD backends ───────────────────────────────────────────────────────────
@@ -130,11 +97,14 @@ class _TenVAD(_VAD):
         # ten-vad expects int16 PCM at 16kHz, 256-sample frames
         # We feed 512 samples in two halves
         pcm16 = (chunk * 32767).astype(np.int16)
+        max_prob = 0.0
         for i in (0, 256):
             prob, _ = self._vad.process(pcm16[i:i + 256])
-            if prob >= self._threshold:
-                return True
-        return False
+            if prob > max_prob:
+                max_prob = prob
+        # Log every chunk at DEBUG so we can see noise vs speech distribution
+        log.debug("vad", extra={"prob": round(float(max_prob), 3)})
+        return max_prob >= self._threshold
 
 
 class _SileroVAD(_VAD):
@@ -222,17 +192,49 @@ class AudioCapture:
         self._queue: queue.Queue[np.ndarray] = queue.Queue()
         self._stream: sd.InputStream | None = None
         self._running = False
+        self._paused = False  # When True, callback drops audio (barge-in suppression)
         self._max_chunks = (_MAX_UTTERANCE_S * 1000) // _CHUNK_MS
+
+    def pause(self) -> None:
+        """Stop accepting audio (legacy — prefer set_vad_threshold for barge-in)."""
+        self._paused = True
+        # Drain any audio already in the queue
+        try:
+            while True:
+                self._queue.get_nowait()
+        except queue.Empty:
+            pass
+
+    def resume(self) -> None:
+        """Re-enable audio capture after playback completes."""
+        self._paused = False
+
+    def set_vad_threshold(self, threshold: float) -> None:
+        """
+        Dynamically adjust VAD speech threshold.
+
+        Use 0.95 during AI's turn (processing/playback) — only barge-in
+        (loud user speech) triggers; quiet AI audio leakage is ignored.
+
+        Use 0.70 during user's turn (listening) — more sensitive to soft speech.
+        """
+        if hasattr(self._vad, "_threshold"):
+            self._vad._threshold = threshold
+            log.info("vad threshold updated", extra={"threshold": threshold})
 
     def _callback(self, indata: np.ndarray, frames: int, time_info, status) -> None:
         if status:
             log.warning("sounddevice status", extra={"status": str(status)})
+        if self._paused:
+            return  # drop audio while paused (barge-in suppression during playback)
         # mono float32
         self._queue.put(indata[:, 0].copy())
 
     def start(self) -> None:
         if self._running:
             return
+        if self._device is None:
+            raise RuntimeError("No input device found. Connect a microphone.")
         self._stream = sd.InputStream(
             device=self._device,
             channels=_CHANNELS,
@@ -253,7 +255,10 @@ class AudioCapture:
         self._running = False
         log.info("mic stream stopped")
 
-    async def utterances(self) -> AsyncIterator[bytes]:
+    async def utterances(
+        self,
+        on_speech_start: callable | None = None,  # type: ignore[type-arg]
+    ) -> AsyncIterator[bytes]:
         """
         Yield complete utterances as WAV bytes.
 
@@ -262,6 +267,10 @@ class AudioCapture:
         2. On speech detected, flush pre-roll into utterance buffer
         3. Keep accumulating until SILENCE_CHUNKS in a row are non-speech
         4. Emit utterance if it has >= MIN_SPEECH_CHUNKS of speech
+
+        Args:
+            on_speech_start: optional sync callback fired the moment speech is detected
+                (use this to update UI state to "capturing").
         """
         if not self._running:
             self.start()
@@ -290,6 +299,11 @@ class AudioCapture:
                     speech_count = 1
                     utterance = list(prefix)  # flush pre-roll
                     utterance.append(chunk)
+                    if on_speech_start is not None:
+                        try:
+                            on_speech_start()
+                        except Exception:
+                            log.exception("on_speech_start callback failed")
             else:
                 # Inside an utterance
                 utterance.append(chunk)

@@ -105,15 +105,24 @@ async def run(text: str, language: str) -> None:
         import sounddevice as sd
         import numpy as np
 
-        # Parse WAV from accumulated bytes
-        with wave.open(io.BytesIO(audio_bytes)) as wf:
-            sample_rate = wf.getframerate()
-            n_channels = wf.getnchannels()
-            sampwidth = wf.getsampwidth()
-            frames = wf.readframes(wf.getnframes())
+        # Fish Speech streaming sends raw PCM (no WAV header per chunk).
+        # Try WAV parse first; fall back to raw PCM at Fish Speech's known rate.
+        sample_rate = 44100
+        n_channels = 1
+        audio_np = None
 
-        dtype = np.int16 if sampwidth == 2 else np.int32
-        audio_np = np.frombuffer(frames, dtype=dtype)
+        if audio_bytes[:4] == b"RIFF":
+            with wave.open(io.BytesIO(audio_bytes)) as wf:
+                sample_rate = wf.getframerate()
+                n_channels = wf.getnchannels()
+                sampwidth = wf.getsampwidth()
+                frames = wf.readframes(wf.getnframes())
+            dtype = np.int16 if sampwidth == 2 else np.int32
+            audio_np = np.frombuffer(frames, dtype=dtype)
+        else:
+            # Raw PCM: Fish Speech outputs 16-bit signed, 44100Hz, mono
+            audio_np = np.frombuffer(audio_bytes, dtype=np.int16)
+
         if n_channels > 1:
             audio_np = audio_np.reshape(-1, n_channels)
 

@@ -31,7 +31,16 @@ log = logging.getLogger(__name__)
 _NO_SPEECH_THRESHOLD = 0.3            # discard if Whisper >30% says not speech
 _MIN_AVG_LOGPROB = -1.0               # discard low-confidence transcriptions
 _MAX_COMPRESSION_RATIO = 2.4          # hallucinations have repetitive tokens
-_LANG_PROB_THRESHOLD = 0.30           # min EN-or-AR probability to keep result
+
+# Whisper hallucinates these common YouTube-trained phrases on noise/silence.
+# Drop them outright. Exact match after lower+strip-punctuation.
+_HALLUCINATION_PHRASES = frozenset({
+    "thank you", "thanks", "thanks for watching", "thank you for watching",
+    "bye", "goodbye", "see you next time", "please subscribe",
+    "you", ".", "...", "okay", "ok", "yeah", "uh", "um", "hmm",
+    "i'm here to help you", "how can i help you",
+    "شكراً", "شكرا", "مع السلامة",
+})
 
 
 # ─── Result type ────────────────────────────────────────────────────────────
@@ -116,37 +125,37 @@ def _transcribe_sync(audio_bytes: bytes, model_size: str) -> TranscribeResult:
     if sr != 16000:
         log.warning("audio not at 16kHz", extra={"sr": sr})
 
-    # Step 1: Detect language probabilities; force EN or AR (EXP-002)
-    # detect_language returns (lang_code, lang_prob, all_probs)
-    try:
-        lang, lang_prob, lang_probs = model.detect_language(audio_np)
-    except Exception:
-        lang_probs = {}
-        lang_prob = 0.0
-
-    en_prob = float(lang_probs.get("en", 0.0)) if isinstance(lang_probs, dict) else 0.0
-    ar_prob = float(lang_probs.get("ar", 0.0)) if isinstance(lang_probs, dict) else 0.0
-
-    duration_ms = int((time.perf_counter() - t0) * 1000)
-
-    if max(en_prob, ar_prob) < _LANG_PROB_THRESHOLD:
-        log.debug(
-            "stt: lang prob below threshold",
-            extra={"en_prob": en_prob, "ar_prob": ar_prob},
+    # Energy gate: distinguish close-mic user speech from distant ambient
+    # conversation that VAD misfires on. Real near-field speech RMS is typically
+    # 0.05-0.3; office ambient murmur is 0.005-0.02.
+    rms = float(np.sqrt(np.mean(audio_np ** 2)))
+    _MIN_RMS = float(os.environ.get("HF_STT_MIN_RMS", "0.025"))
+    if rms < _MIN_RMS:
+        duration_ms = int((time.perf_counter() - t0) * 1000)
+        log.info(
+            "stt: filtered — low energy (ambient noise)",
+            extra={"rms": round(rms, 4), "min_rms": _MIN_RMS},
         )
         return TranscribeResult(text="", language="unknown", confidence=0.0, duration_ms=duration_ms)
 
-    detected = "en" if en_prob > ar_prob else "ar"
-
-    # Step 2: Transcribe with forced language
-    # EXP-008: NO vad_filter (audio_capture already does it)
+    # Single-pass transcribe — Whisper detects language as part of decoding.
     # EXP-009: beam_size=1 (greedy)
+    # vad_filter=True: trims silent regions before decoding → prevents "Thank you"
+    # style hallucinations on noisy office audio. Worth the ~30-50ms cost.
     segments_iter, info = model.transcribe(
         audio_np,
-        language=detected,
         beam_size=1,
+        vad_filter=True,
+        vad_parameters={"min_silence_duration_ms": 300},
     )
     segments = list(segments_iter)
+
+    # Trust Whisper's detected language. Reject anything that's not en/ar.
+    duration_ms = int((time.perf_counter() - t0) * 1000)
+    if info.language not in ("en", "ar"):
+        log.info("stt: filtered — non-EN/AR language", extra={"detected": info.language})
+        return TranscribeResult(text="", language="unknown", confidence=0.0, duration_ms=duration_ms)
+    detected = info.language
 
     duration_ms = int((time.perf_counter() - t0) * 1000)
 
@@ -158,32 +167,50 @@ def _transcribe_sync(audio_bytes: bytes, model_size: str) -> TranscribeResult:
     avg_logprob = sum(getattr(s, "avg_logprob", 0.0) for s in segments) / len(segments)
     avg_compression = sum(getattr(s, "compression_ratio", 0.0) for s in segments) / len(segments)
 
-    log.debug(
-        "stt confidence",
+    text_preview = " ".join(s.text.strip() for s in segments).strip()
+
+    log.info(
+        "stt scores",
         extra={
             "lang": detected,
+            "rms": round(rms, 4),
             "no_speech_prob": round(avg_no_speech, 3),
             "avg_logprob": round(avg_logprob, 3),
             "compression_ratio": round(avg_compression, 3),
-            "duration_ms": duration_ms,
+            "text": text_preview[:80],
         },
     )
 
     if avg_no_speech > _NO_SPEECH_THRESHOLD:
-        log.debug("stt: skipping — likely not speech", extra={"no_speech_prob": avg_no_speech})
+        log.info(
+            "stt: filtered — no_speech",
+            extra={"no_speech_prob": round(avg_no_speech, 3), "text": text_preview[:80]},
+        )
         return TranscribeResult(text="", language=detected, confidence=0.0, duration_ms=duration_ms)
 
     if avg_compression > _MAX_COMPRESSION_RATIO:
-        log.debug("stt: skipping — hallucination", extra={"compression": avg_compression})
+        log.info(
+            "stt: filtered — hallucination (compression)",
+            extra={"compression": round(avg_compression, 3), "text": text_preview[:80]},
+        )
         return TranscribeResult(text="", language=detected, confidence=0.0, duration_ms=duration_ms)
 
     if avg_logprob < _MIN_AVG_LOGPROB:
-        log.debug("stt: skipping — low confidence", extra={"avg_logprob": avg_logprob})
+        log.info(
+            "stt: filtered — low logprob",
+            extra={"avg_logprob": round(avg_logprob, 3), "text": text_preview[:80]},
+        )
         return TranscribeResult(text="", language=detected, confidence=0.0, duration_ms=duration_ms)
 
-    text = " ".join(s.text.strip() for s in segments).strip()
+    text = text_preview
 
-    # Step 4: Script validation (catches third-language misclassification)
+    # Step 4: Hallucination denylist (common YouTube-trained Whisper hallucinations)
+    text_normalized = text.lower().strip(".,!?¿¡،؟ \t\n")
+    if text_normalized in _HALLUCINATION_PHRASES:
+        log.info("stt: filtered — hallucination phrase", extra={"text": text})
+        return TranscribeResult(text="", language=detected, confidence=0.0, duration_ms=duration_ms)
+
+    # Step 5: Script validation (catches third-language misclassification)
     if not _script_matches_language(text, detected):
         log.debug(
             "stt: skipping — script mismatch",
