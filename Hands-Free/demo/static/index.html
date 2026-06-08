@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Rammas — DEWA</title>
+  <style>
+    /* ── Reset & Base ─────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --green:       #00A651;
+      --green-dim:   #007A3D;
+      --green-glow:  rgba(0, 166, 81, 0.35);
+      --green-ring:  rgba(0, 166, 81, 0.15);
+      --bg:          #080D0B;
+      --surface:     rgba(255,255,255,0.04);
+      --border:      rgba(0, 166, 81, 0.18);
+      --text:        #E8F5EE;
+      --muted:       rgba(232,245,238,0.45);
+      --red:         #FF4444;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+      color: var(--text);
+      overflow: hidden;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+
+    /* ── Layout ───────────────────────────────────────────────── */
+    .page {
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+      padding: 48px 24px 52px;
+    }
+
+    /* ── Header — DEWA Logo ───────────────────────────────────── */
+    .header {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .dewa-logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .dewa-emblem {
+      width: 44px;
+      height: 44px;
+      flex-shrink: 0;
+    }
+
+    .dewa-wordmark {
+      display: flex;
+      flex-direction: column;
+      line-height: 1;
+    }
+
+    .dewa-wordmark .dewa {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      color: var(--green);
+    }
+
+    .dewa-wordmark .tagline {
+      font-size: 9px;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+      text-transform: uppercase;
+      margin-top: 3px;
+    }
+
+    .assistant-name {
+      font-size: 13px;
+      letter-spacing: 0.18em;
+      color: var(--muted);
+      text-transform: uppercase;
+      font-weight: 500;
+    }
+
+    /* ── Orb / Mic Button ─────────────────────────────────────── */
+    .orb-wrap {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex: 1;
+    }
+
+    /* Outer atmospheric ring — only visible when active */
+    .orb-atmosphere {
+      position: absolute;
+      width: 240px;
+      height: 240px;
+      border-radius: 50%;
+      background: radial-gradient(circle, var(--green-ring) 0%, transparent 70%);
+      opacity: 0;
+      transition: opacity 0.6s ease;
+      pointer-events: none;
+    }
+
+    /* Pulse rings */
+    .pulse-ring {
+      position: absolute;
+      width: 160px;
+      height: 160px;
+      border-radius: 50%;
+      border: 1.5px solid var(--green);
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .pulse-ring.r1 { animation: none; }
+    .pulse-ring.r2 { animation: none; }
+
+    @keyframes pulse-out {
+      0%   { transform: scale(1);    opacity: 0.5; }
+      100% { transform: scale(1.8);  opacity: 0;   }
+    }
+
+    /* Main orb button */
+    .orb {
+      position: relative;
+      width: 140px;
+      height: 140px;
+      border-radius: 50%;
+      border: none;
+      cursor: pointer;
+      outline: none;
+      background: radial-gradient(135deg at 35% 35%,
+        rgba(0,166,81,0.25) 0%,
+        rgba(0,166,81,0.08) 60%,
+        transparent 100%
+      );
+      box-shadow:
+        0 0 0 1.5px var(--border),
+        0 0 32px rgba(0,166,81,0.12),
+        inset 0 1px 0 rgba(255,255,255,0.06);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition:
+        box-shadow 0.3s ease,
+        background 0.3s ease,
+        transform 0.15s ease;
+      -webkit-appearance: none;
+      touch-action: manipulation;
+    }
+
+    .orb:active { transform: scale(0.96); }
+
+    .orb .mic-icon {
+      opacity: 0.75;
+      transition: opacity 0.3s ease;
+    }
+
+    /* ── States ───────────────────────────────────────────────── */
+
+    /* LISTENING */
+    body.listening .orb {
+      background: radial-gradient(135deg at 35% 35%,
+        rgba(0,166,81,0.55) 0%,
+        rgba(0,166,81,0.20) 60%,
+        transparent 100%
+      );
+      box-shadow:
+        0 0 0 1.5px var(--green),
+        0 0 48px var(--green-glow),
+        0 0 80px rgba(0,166,81,0.15),
+        inset 0 1px 0 rgba(255,255,255,0.10);
+    }
+
+    body.listening .orb .mic-icon { opacity: 1; }
+    body.listening .orb-atmosphere { opacity: 1; }
+    body.listening .pulse-ring.r1 {
+      animation: pulse-out 1.8s ease-out infinite;
+    }
+    body.listening .pulse-ring.r2 {
+      animation: pulse-out 1.8s ease-out 0.9s infinite;
+    }
+
+    /* THINKING */
+    body.thinking .orb {
+      background: radial-gradient(135deg at 35% 35%,
+        rgba(0,166,81,0.18) 0%,
+        rgba(0,166,81,0.06) 60%,
+        transparent 100%
+      );
+      box-shadow:
+        0 0 0 1.5px rgba(0,166,81,0.5),
+        0 0 24px rgba(0,166,81,0.10);
+      animation: thinking-pulse 1.2s ease-in-out infinite;
+    }
+
+    @keyframes thinking-pulse {
+      0%, 100% { box-shadow: 0 0 0 1.5px rgba(0,166,81,0.5), 0 0 24px rgba(0,166,81,0.10); }
+      50%       { box-shadow: 0 0 0 1.5px rgba(0,166,81,0.9), 0 0 40px rgba(0,166,81,0.28); }
+    }
+
+    /* SPEAKING */
+    body.speaking .orb {
+      background: radial-gradient(135deg at 35% 35%,
+        rgba(0,166,81,0.40) 0%,
+        rgba(0,166,81,0.14) 60%,
+        transparent 100%
+      );
+      box-shadow:
+        0 0 0 1.5px var(--green),
+        0 0 56px var(--green-glow);
+    }
+    body.speaking .orb-atmosphere { opacity: 0.7; }
+
+    /* MUTED */
+    body.muted .orb {
+      box-shadow:
+        0 0 0 1.5px rgba(255,68,68,0.5),
+        0 0 24px rgba(255,68,68,0.12);
+    }
+
+    /* ── Waveform ─────────────────────────────────────────────── */
+    .waveform {
+      position: absolute;
+      bottom: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      height: 28px;
+      opacity: 0;
+      transition: opacity 0.4s ease;
+      pointer-events: none;
+    }
+
+    body.speaking .waveform,
+    body.listening .waveform { opacity: 1; }
+
+    .bar {
+      width: 3px;
+      border-radius: 2px;
+      background: var(--green);
+      height: 4px;
+      transform-origin: bottom center;
+      animation: none;
+    }
+
+    body.speaking  .bar { animation: wave 0.6s ease-in-out infinite alternate; }
+    body.listening .bar { animation: wave 1.2s ease-in-out infinite alternate; }
+
+    .bar:nth-child(1)  { animation-delay: 0s;    }
+    .bar:nth-child(2)  { animation-delay: 0.06s; }
+    .bar:nth-child(3)  { animation-delay: 0.12s; }
+    .bar:nth-child(4)  { animation-delay: 0.18s; }
+    .bar:nth-child(5)  { animation-delay: 0.24s; }
+    .bar:nth-child(6)  { animation-delay: 0.18s; }
+    .bar:nth-child(7)  { animation-delay: 0.12s; }
+    .bar:nth-child(8)  { animation-delay: 0.06s; }
+    .bar:nth-child(9)  { animation-delay: 0s;    }
+
+    @keyframes wave {
+      from { height: 4px;  opacity: 0.4; }
+      to   { height: 22px; opacity: 1;   }
+    }
+
+    /* ── Status text ──────────────────────────────────────────── */
+    .status-area {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 18px;
+      width: 100%;
+    }
+
+    .status {
+      font-size: 15px;
+      font-weight: 400;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      min-height: 22px;
+      transition: opacity 0.3s ease;
+    }
+
+    .status.active { color: var(--text); }
+
+    /* Transcript bubble */
+    .transcript {
+      font-size: 14px;
+      color: var(--muted);
+      max-width: 300px;
+      text-align: center;
+      line-height: 1.5;
+      min-height: 21px;
+      padding: 0 8px;
+      transition: opacity 0.4s ease;
+      font-style: italic;
+    }
+
+    /* Mute button */
+    .mute-btn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      padding: 10px 22px;
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 500;
+      letter-spacing: 0.04em;
+      transition: all 0.25s ease;
+      -webkit-appearance: none;
+      touch-action: manipulation;
+    }
+
+    .mute-btn:active { transform: scale(0.97); }
+
+    body.muted .mute-btn {
+      border-color: rgba(255,68,68,0.4);
+      color: #FF7777;
+    }
+
+    /* ── Connecting overlay ───────────────────────────────────── */
+    #overlay {
+      position: fixed;
+      inset: 0;
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      z-index: 100;
+      transition: opacity 0.6s ease;
+    }
+
+    #overlay.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 2px solid rgba(0,166,81,0.2);
+      border-top-color: var(--green);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #overlay-msg {
+      font-size: 14px;
+      color: var(--muted);
+      letter-spacing: 0.06em;
+    }
+
+    #overlay-err {
+      font-size: 13px;
+      color: #FF7777;
+      max-width: 280px;
+      text-align: center;
+      line-height: 1.5;
+      display: none;
+    }
+  </style>
+</head>
+<body class="idle">
+
+  <!-- Connecting overlay -->
+  <div id="overlay">
+    <div class="spinner"></div>
+    <p id="overlay-msg">Connecting…</p>
+    <p id="overlay-err"></p>
+  </div>
+
+  <div class="page">
+
+    <!-- Header -->
+    <header class="header">
+      <div class="dewa-logo">
+        <!-- DEWA emblem (geometric sun / water drop) -->
+        <svg class="dewa-emblem" viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="22" cy="22" r="20" stroke="#00A651" stroke-width="1.5" fill="none" opacity="0.3"/>
+          <!-- Stylised sun rays -->
+          <circle cx="22" cy="22" r="7" fill="#00A651" opacity="0.9"/>
+          <line x1="22" y1="4"  x2="22" y2="10" stroke="#00A651" stroke-width="2" stroke-linecap="round"/>
+          <line x1="22" y1="34" x2="22" y2="40" stroke="#00A651" stroke-width="2" stroke-linecap="round"/>
+          <line x1="4"  y1="22" x2="10" y2="22" stroke="#00A651" stroke-width="2" stroke-linecap="round"/>
+          <line x1="34" y1="22" x2="40" y2="22" stroke="#00A651" stroke-width="2" stroke-linecap="round"/>
+          <line x1="8.6"  y1="8.6"  x2="12.8" y2="12.8" stroke="#00A651" stroke-width="1.5" stroke-linecap="round"/>
+          <line x1="31.2" y1="31.2" x2="35.4" y2="35.4" stroke="#00A651" stroke-width="1.5" stroke-linecap="round"/>
+          <line x1="35.4" y1="8.6"  x2="31.2" y2="12.8" stroke="#00A651" stroke-width="1.5" stroke-linecap="round"/>
+          <line x1="12.8" y1="31.2" x2="8.6"  y2="35.4" stroke="#00A651" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        <div class="dewa-wordmark">
+          <span class="dewa">DEWA</span>
+          <span class="tagline">Dubai Electricity &amp; Water</span>
+        </div>
+      </div>
+      <span class="assistant-name">Rammas AI Assistant</span>
+    </header>
+
+    <!-- Orb -->
+    <div class="orb-wrap">
+      <div class="orb-atmosphere"></div>
+      <div class="pulse-ring r1"></div>
+      <div class="pulse-ring r2"></div>
+
+      <button class="orb" id="orbBtn" aria-label="Tap to speak">
+        <!-- Mic icon -->
+        <svg class="mic-icon" width="42" height="42" viewBox="0 0 24 24" fill="none"
+             stroke="#00A651" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="9" y="2" width="6" height="11" rx="3"/>
+          <path d="M5 10a7 7 0 0 0 14 0"/>
+          <line x1="12" y1="19" x2="12" y2="22"/>
+          <line x1="8"  y1="22" x2="16" y2="22"/>
+        </svg>
+
+        <!-- Muted icon (hidden by default) -->
+        <svg class="mic-muted-icon" width="42" height="42" viewBox="0 0 24 24" fill="none"
+             stroke="#FF4444" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+             style="display:none; position:absolute;">
+          <rect x="9" y="2" width="6" height="11" rx="3" opacity="0.4"/>
+          <line x1="2" y1="2" x2="22" y2="22"/>
+        </svg>
+      </button>
+
+      <!-- Waveform bars inside orb area -->
+      <div class="waveform">
+        <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+        <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+        <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+      </div>
+    </div>
+
+    <!-- Bottom controls -->
+    <div class="status-area">
+      <p class="transcript" id="transcript"></p>
+      <p class="status" id="status">Tap orb to speak</p>
+      <button class="mute-btn" id="muteBtn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <rect x="9" y="2" width="6" height="11" rx="3"/>
+          <path d="M5 10a7 7 0 0 0 14 0"/>
+          <line x1="12" y1="19" x2="12" y2="22"/>
+        </svg>
+        <span id="muteBtnLabel">Mute</span>
+      </button>
+    </div>
+
+  </div>
+
+  <!-- Hidden audio element for remote stream playback -->
+  <audio id="remoteAudio" autoplay playsinline></audio>
+
+  <script>
+  /* ── State ──────────────────────────────────────────────────── */
+  const States = { IDLE:'idle', LISTENING:'listening', THINKING:'thinking', SPEAKING:'speaking', MUTED:'muted', ERROR:'error' };
+  let state      = States.IDLE;
+  let muted      = false;
+  let pcId       = null;
+  let pc         = null;
+  let localStream = null;
+  let micTrack   = null;
+
+  /* ── Client-side latency timing ─────────────────────────────── */
+  // These timestamps use performance.now() (monotonic, sub-ms resolution)
+  let _speechEndTime    = null;   // when local RMS dropped → user stopped speaking
+  let _botFirstAudioTime = null;  // when remote RMS first rose → first bot audio
+
+  function _ts() {
+    const d = new Date();
+    const hh = String(d.getHours()).padStart(2,'0');
+    const mm = String(d.getMinutes()).padStart(2,'0');
+    const ss = String(d.getSeconds()).padStart(2,'0');
+    const ms = String(d.getMilliseconds()).padStart(3,'0');
+    return `${hh}:${mm}:${ss}.${ms}`;
+  }
+
+  /* ── DOM ────────────────────────────────────────────────────── */
+  const overlay     = document.getElementById('overlay');
+  const overlayMsg  = document.getElementById('overlay-msg');
+  const overlayErr  = document.getElementById('overlay-err');
+  const orbBtn      = document.getElementById('orbBtn');
+  const muteBtn     = document.getElementById('muteBtn');
+  const muteBtnLbl  = document.getElementById('muteBtnLabel');
+  const statusEl    = document.getElementById('status');
+  const transcriptEl= document.getElementById('transcript');
+  const remoteAudio = document.getElementById('remoteAudio');
+  const micIcon     = orbBtn.querySelector('.mic-icon');
+  const micMutedIcon= orbBtn.querySelector('.mic-muted-icon');
+
+  /* ── UI helpers ─────────────────────────────────────────────── */
+  function setState(s) {
+    state = s;
+    document.body.className = s + (muted ? ' muted' : '');
+  }
+
+  function setStatus(msg, active=false) {
+    statusEl.textContent = msg;
+    statusEl.className = 'status' + (active ? ' active' : '');
+  }
+
+  function setTranscript(t) {
+    transcriptEl.textContent = t ? `"${t}"` : '';
+  }
+
+  function setMuted(m) {
+    muted = m;
+    if (micTrack) micTrack.enabled = !m;
+    micIcon.style.display      = m ? 'none'  : '';
+    micMutedIcon.style.display = m ? ''      : 'none';
+    muteBtnLbl.textContent     = m ? 'Unmute' : 'Mute';
+    document.body.className    = state + (m ? ' muted' : '');
+    setStatus(m ? 'Microphone muted' : 'Listening…', !m);
+  }
+
+  /* ── WebRTC setup ───────────────────────────────────────────── */
+  async function connect() {
+    overlayMsg.textContent = 'Requesting microphone…';
+
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,   // browser AEC — replaces RNNoise
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: 16000,
+        },
+        video: false,
+      });
+    } catch (e) {
+      showError('Microphone access denied.<br>Check browser permissions and reload.');
+      return;
+    }
+
+    micTrack = localStream.getAudioTracks()[0];
+    overlayMsg.textContent = 'Connecting to Rammas…';
+
+    pc = new RTCPeerConnection({
+      iceServers: [],                // LAN only — no STUN needed
+      iceTransportPolicy: 'all',
+    });
+
+    // Add mic track
+    localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+
+    // Receive bot audio
+    pc.ontrack = (e) => {
+      if (e.streams && e.streams[0]) {
+        remoteAudio.srcObject = e.streams[0];
+        remoteAudio.play().catch(() => {});
+        monitorRemoteAudio(e.streams[0]);
+      }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      if (['failed','disconnected','closed'].includes(pc.iceConnectionState)) {
+        showError('Connection lost. Please reload.');
+      }
+    };
+
+    // Create SDP offer
+    const offer = await pc.createOffer({ offerToReceiveAudio: true });
+    await pc.setLocalDescription(offer);
+
+    // Trickle ICE — collect candidates then send
+    const candidates = [];
+    pc.onicecandidate = e => { if (e.candidate) candidates.push(e.candidate); };
+    await new Promise(res => { pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') res(); }; setTimeout(res, 3000); });
+
+    // Send offer to server
+    let resp;
+    try {
+      resp = await fetch('/api/offer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type }),
+      });
+    } catch (e) {
+      showError('Cannot reach server.<br>Make sure the server is running.');
+      return;
+    }
+
+    if (!resp.ok) { showError('Server error ' + resp.status); return; }
+    const answer = await resp.json();
+    pcId = answer.pc_id;
+
+    await pc.setRemoteDescription({ sdp: answer.sdp, type: answer.type });
+
+    // Send any trickled ICE candidates
+    if (candidates.length) {
+      await fetch('/api/offer', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pc_id: pcId,
+          candidates: candidates.map(c => ({
+            candidate: c.candidate,
+            sdpMid: c.sdpMid,
+            sdpMLineIndex: c.sdpMLineIndex,
+          })),
+        }),
+      });
+    }
+
+    // Ready!
+    overlay.classList.add('hidden');
+    setState(States.LISTENING);
+    setStatus('Listening…', true);
+    monitorLocalAudio();
+  }
+
+  /* ── Audio activity detection ───────────────────────────────── */
+  function monitorLocalAudio() {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = ctx.createMediaStreamSource(localStream);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 256;
+    src.connect(analyser);
+    const data = new Uint8Array(analyser.frequencyBinCount);
+
+    let speakingLocal = false;
+    setInterval(() => {
+      if (muted) return;
+      analyser.getByteFrequencyData(data);
+      const rms = data.reduce((a,b) => a+b,0) / data.length;
+      const isSpeaking = rms > 12;
+      if (isSpeaking !== speakingLocal) {
+        speakingLocal = isSpeaking;
+
+        if (isSpeaking) {
+          // User started speaking — reset latency clock
+          _speechEndTime    = null;
+          _botFirstAudioTime = null;
+          console.log(`[${_ts()}] 🗣️  user speech start (client)`);
+        } else {
+          // User stopped speaking — start latency clock
+          _speechEndTime = performance.now();
+          console.log(`[${_ts()}] ↳ user speech end  ← client latency clock starts`);
+        }
+
+        if (state !== States.SPEAKING) {
+          setState(isSpeaking ? States.LISTENING : States.THINKING);
+          setStatus(isSpeaking ? 'Listening…' : 'Thinking…', true);
+        }
+      }
+    }, 80);
+  }
+
+  function monitorRemoteAudio(stream) {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = ctx.createMediaStreamSource(stream);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 256;
+    src.connect(analyser);
+    const data = new Uint8Array(analyser.frequencyBinCount);
+
+    let botWasSpeaking = false;
+    setInterval(() => {
+      analyser.getByteFrequencyData(data);
+      const rms = data.reduce((a,b) => a+b,0) / data.length;
+      const isBotSpeaking = rms > 8;
+      if (isBotSpeaking !== botWasSpeaking) {
+        botWasSpeaking = isBotSpeaking;
+        if (isBotSpeaking) {
+          // Bot first audio — compute perceived TTFA
+          if (_botFirstAudioTime === null) {
+            _botFirstAudioTime = performance.now();
+            if (_speechEndTime !== null) {
+              const ttfa = Math.round(_botFirstAudioTime - _speechEndTime);
+              console.log(`[${_ts()}] 📢 bot audio start  ← CLIENT TTFA: ${ttfa}ms`);
+            } else {
+              console.log(`[${_ts()}] 📢 bot audio start (no speech-end stamp)`);
+            }
+          } else {
+            console.log(`[${_ts()}] 📢 bot audio continues`);
+          }
+          setState(States.SPEAKING);
+          setStatus('Speaking…', true);
+        } else {
+          const now = performance.now();
+          if (_botFirstAudioTime !== null) {
+            const dur = Math.round(now - _botFirstAudioTime);
+            console.log(`[${_ts()}] ↳ bot audio end  (audio duration: ${dur}ms)`);
+          }
+          setState(muted ? States.MUTED : States.LISTENING);
+          setStatus(muted ? 'Microphone muted' : 'Listening…', !muted);
+          setTranscript('');
+          _botFirstAudioTime = null;  // reset so next turn gets fresh stamp
+        }
+      }
+    }, 80);
+  }
+
+  /* ── Error ──────────────────────────────────────────────────── */
+  function showError(msg) {
+    overlayMsg.textContent = '';
+    overlayErr.innerHTML = msg;
+    overlayErr.style.display = 'block';
+    overlay.classList.remove('hidden');
+    // Hide spinner
+    const spinner = overlay.querySelector('.spinner');
+    if (spinner) spinner.style.display = 'none';
+  }
+
+  /* ── Orb tap — toggle connect / mute ────────────────────────── */
+  orbBtn.addEventListener('click', () => {
+    if (!pc) {
+      connect();
+    } else {
+      setMuted(!muted);
+    }
+  });
+
+  muteBtn.addEventListener('click', () => setMuted(!muted));
+
+  /* ── Auto-connect on load ────────────────────────────────────── */
+  window.addEventListener('load', () => {
+    // Small delay so the page renders first
+    setTimeout(connect, 300);
+  });
+  </script>
+</body>
+</html>

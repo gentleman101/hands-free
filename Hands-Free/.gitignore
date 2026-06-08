@@ -51,6 +51,9 @@ assets/fillers/*.wav
 *.log
 logs/
 
+# Pipecat demo — runtime-only
+demo/certs/
+
 # OS
 Thumbs.db
 desktop.ini
